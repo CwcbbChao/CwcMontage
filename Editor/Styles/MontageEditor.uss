@@ -1,0 +1,1034 @@
+/* MontageEditor.uss - Modern Unity & Timeline Style for CwcMontage */
+
+.montage-editor-root {
+    flex-grow: 1;
+    background-color: var(--unity-colors-window-background, #282828);
+    color: var(--unity-colors-default-text, #E0E0E0);
+    font-size: 12px;
+}
+
+/* ========================================================================= */
+/* 0. Top Window Bar (全局菜单与工具栏)                                       */
+/* ========================================================================= */
+
+.montage-window-top-bar {
+    flex-direction: row;
+    height: 28px;
+    background-color: #222222;
+    border-bottom-width: 1px;
+    border-bottom-color: #303030;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 6px;
+    padding-right: 6px;
+}
+
+.montage-window-top-left {
+    flex-direction: row;
+    align-items: center;
+}
+
+.montage-window-top-right {
+    flex-direction: row;
+    align-items: center;
+}
+
+.montage-top-bar-btn {
+    flex-direction: row;
+    align-items: center;
+    height: 22px;
+    padding-left: 8px;
+    padding-right: 8px;
+    margin-right: 4px;
+    border-radius: 3px;
+    border-width: 1px;
+    border-color: #3C3C3C;
+    background-color: #2D2D2D;
+    color: #DDDDDD;
+    font-size: 11px;
+}
+
+.montage-top-bar-btn:hover {
+    background-color: #3A3A3A;
+    border-color: #555555;
+    color: #FFFFFF;
+}
+
+.montage-top-bar-btn > Image {
+    margin-right: 4px;
+}
+
+.montage-top-bar-info {
+    font-size: 11px;
+    color: #777777;
+    margin-right: 4px;
+}
+
+/* ========================================================================= */
+/* 1. Tab Bar (多标签页导航栏)                                               */
+/* ========================================================================= */
+
+.montage-tab-bar {
+    flex-direction: row;
+    height: 28px;
+    background-color: var(--unity-colors-tab-background, #1B1B1B);
+    border-bottom-width: 1px;
+    border-bottom-color: var(--unity-colors-window-border, #303030);
+    align-items: center;
+    padding-left: 4px;
+    padding-right: 4px;
+}
+
+.montage-tab-scroll {
+    flex-grow: 1;
+    flex-direction: row;
+    align-items: center;
+}
+
+.montage-tab-item {
+    flex-direction: row;
+    align-items: center;
+    height: 24px;
+    padding-left: 10px;
+    padding-right: 6px;
+    margin-right: 2px;
+    background-color: var(--unity-colors-tab-background, #242424);
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    border-top-width: 1px;
+    border-left-width: 1px;
+    border-right-width: 1px;
+    border-top-color: transparent;
+    border-left-color: transparent;
+    border-right-color: transparent;
+    cursor: link;
+}
+
+.montage-tab-item:hover {
+    background-color: #2F2F2F;
+}
+
+.montage-tab-item-active {
+    background-color: var(--unity-colors-window-background, #282828);
+    border-top-color: #3880F0;
+    border-top-width: 2px;
+    border-left-color: var(--unity-colors-window-border, #3A3A3A);
+    border-right-color: var(--unity-colors-window-border, #3A3A3A);
+}
+
+.montage-tab-label {
+    margin-right: 6px;
+    color: #C0C0C0;
+    font-size: 11px;
+    -unity-text-align: middle-left;
+}
+
+.montage-tab-item-active .montage-tab-label {
+    color: #FFFFFF;
+    -unity-font-style: bold;
+}
+
+.montage-tab-close-btn {
+    width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    border-width: 0;
+    background-color: transparent;
+    color: #888888;
+    font-size: 10px;
+    -unity-text-align: middle-center;
+    padding: 0;
+    margin: 0;
+}
+
+.montage-tab-close-btn:hover {
+    background-color: #552222;
+    color: #FF7777;
+}
+
+/* ========================================================================= */
+/* 2. Viewport Playback Bar (视频编辑器风格三段式播放栏)                       */
+/* ========================================================================= */
+
+.montage-playback-bar {
+    position: relative;
+    flex-direction: row;
+    height: 34px;
+    background-color: #222222;
+    border-top-width: 1px;
+    border-top-color: #333333;
+    border-bottom-width: 1px;
+    border-bottom-color: #1A1A1A;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 8px;
+    padding-right: 8px;
+}
+
+.montage-playback-left {
+    flex-direction: row;
+    align-items: center;
+    min-width: 200px;
+}
+
+.montage-playback-center {
+    position: absolute;
+    left: 50%;
+    translate: -50% 0;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+}
+
+.montage-playback-right {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-end;
+    min-width: 240px;
+}
+
+.montage-playback-btn {
+    width: 26px;
+    height: 22px;
+    padding: 0;
+    margin-left: 2px;
+    margin-right: 2px;
+    border-radius: 3px;
+    border-width: 1px;
+    border-color: #3C3C3C;
+    background-color: #2C2C2C;
+    color: #CCCCCC;
+    align-items: center;
+    justify-content: center;
+}
+
+.montage-playback-btn:hover {
+    background-color: #3C3C3C;
+    border-color: #555555;
+    color: #FFFFFF;
+}
+
+.montage-play-center-btn {
+    width: 38px;
+    height: 24px;
+    background-color: #2E5A2E;
+    border-color: #3E7A3E;
+    color: #88FF88;
+    margin-left: 4px;
+    margin-right: 4px;
+    border-radius: 4px;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+
+.montage-play-center-btn:hover {
+    background-color: #3A6E3A;
+    border-color: #509C50;
+    color: #AAFFAA;
+}
+
+.montage-play-center-btn-playing {
+    background-color: #7A5515;
+    border-color: #AA7E25;
+    color: #FFE088;
+}
+
+.montage-play-center-btn-playing:hover {
+    background-color: #8C6218;
+    border-color: #C08E2A;
+}
+
+.montage-time-info-box {
+    flex-direction: row;
+    align-items: center;
+    background-color: #1A1A1A;
+    border-radius: 4px;
+    border-width: 1px;
+    border-color: #303030;
+    padding-left: 6px;
+    padding-right: 6px;
+    height: 22px;
+}
+
+.montage-time-val {
+    color: #4FC3F7;
+    font-size: 11px;
+    -unity-font-style: bold;
+    -unity-text-align: middle-left;
+}
+
+.montage-time-divider {
+    color: #444444;
+    margin-left: 6px;
+    margin-right: 6px;
+    font-size: 10px;
+}
+
+.montage-frame-val {
+    color: #FFB74D;
+    font-size: 11px;
+    -unity-font-style: bold;
+    -unity-text-align: middle-left;
+}
+
+.montage-section-info-badge {
+    background-color: #1A365D;
+    color: #90CDF4;
+    border-radius: 3px;
+    padding-left: 5px;
+    padding-right: 5px;
+    font-size: 10px;
+    -unity-font-style: bold;
+    height: 16px;
+    -unity-text-align: middle-center;
+    margin-left: 6px;
+}
+
+.montage-preview-speed-box {
+    flex-direction: row;
+    align-items: center;
+    margin-right: 12px;
+}
+
+.montage-preview-label-draggable {
+    font-size: 11px;
+    color: #AAAAAA;
+    margin-right: 4px;
+    cursor: ew-resize;
+    -unity-text-align: middle-left;
+}
+
+.montage-preview-label-draggable:hover {
+    color: #4FC3F7;
+}
+
+.montage-preview-speed-input {
+    width: 46px;
+    height: 20px;
+    margin: 0;
+    padding: 0;
+}
+
+.montage-preview-speed-input > .unity-base-field__input {
+    background-color: #2A2A2A;
+    border-width: 1px;
+    border-color: #3C3C3C;
+    border-radius: 3px;
+    font-size: 11px;
+    color: #E0E0E0;
+    -unity-text-align: middle-center;
+    padding-left: 2px;
+    padding-right: 2px;
+}
+
+.montage-preview-speed-input > .unity-base-field__input:focus {
+    border-color: #4FC3F7;
+}
+
+.montage-preview-speed-suffix {
+    font-size: 11px;
+    color: #777777;
+    margin-left: 2px;
+}
+
+.montage-preview-loop-toggle {
+    margin-left: 0;
+    font-size: 11px;
+}
+
+.montage-preview-loop-toggle > .unity-toggle__label {
+    min-width: 0;
+    font-size: 11px;
+    color: #CCCCCC;
+    margin-left: 2px;
+    margin-right: 2px;
+}
+
+/* ========================================================================= */
+/* 3. Main Split View Layout (工作区分割视图)                                */
+/* ========================================================================= */
+
+.montage-main-split {
+    flex-grow: 1;
+}
+
+.montage-upper-split {
+    flex-direction: row;
+    min-height: 100px;
+    border-bottom-width: 1px;
+    border-bottom-color: var(--unity-colors-window-border, #353535);
+}
+
+.montage-viewport-container {
+    flex-grow: 1;
+    min-width: 100px;
+    background-color: #181818;
+    position: relative;
+}
+
+.montage-preview-image {
+    width: 100%;
+    height: 100%;
+}
+
+.montage-viewport-overlay {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    flex-direction: row;
+    background-color: rgba(25, 25, 25, 0.75);
+    border-radius: 4px;
+    padding: 3px;
+}
+
+.montage-overlay-btn {
+    min-width: 32px;
+    height: 22px;
+    padding-left: 6px;
+    padding-right: 6px;
+    margin-left: 2px;
+    margin-right: 2px;
+    border-width: 0;
+    border-radius: 3px;
+    background-color: transparent;
+    color: #CCCCCC;
+    font-size: 11px;
+    -unity-text-align: middle-center;
+}
+
+.montage-overlay-btn:hover {
+    background-color: rgba(255, 255, 255, 0.15);
+    color: #FFFFFF;
+}
+
+.montage-overlay-btn-active {
+    background-color: #2F6FD6;
+    color: #FFFFFF;
+}
+
+.montage-overlay-btn-active:hover {
+    background-color: #3F8CFF;
+}
+
+.montage-overlay-separator {
+    width: 1px;
+    height: 14px;
+    background-color: rgba(255, 255, 255, 0.2);
+    margin-left: 4px;
+    margin-right: 4px;
+    align-self: center;
+}
+
+.montage-overlay-model-box {
+    flex-direction: row;
+    align-items: center;
+    margin-right: 6px;
+    padding-right: 6px;
+    border-right-width: 1px;
+    border-right-color: rgba(255, 255, 255, 0.2);
+}
+
+.montage-overlay-model-label {
+    font-size: 11px;
+    color: #AAAAAA;
+    margin-right: 4px;
+}
+
+.montage-overlay-model-field {
+    width: 140px;
+    height: 20px;
+    margin: 0;
+}
+
+.montage-overlay-model-field > .unity-base-field__input {
+    background-color: #2A2A2A;
+    border-width: 1px;
+    border-color: #444444;
+    border-radius: 3px;
+    font-size: 11px;
+    color: #E0E0E0;
+    padding-left: 4px;
+}
+
+.montage-inspector-sidebar {
+    min-width: 220px;
+    background-color: var(--unity-colors-window-background, #252525);
+    border-left-width: 1px;
+    border-left-color: var(--unity-colors-window-border, #353535);
+}
+
+/* ========================================================================= */
+/* 4. Timeline Container, Zoom & Ruler (时间轴与缩放标尺)                     */
+/* ========================================================================= */
+
+.montage-timeline-container {
+    flex-grow: 1;
+    min-height: 120px;
+    background-color: #202020;
+    flex-direction: row;
+}
+
+.montage-timeline-left-column {
+    width: 220px;
+    min-width: 220px;
+    max-width: 220px;
+    flex-shrink: 0;
+    background-color: #222222;
+    border-right-width: 1px;
+    border-right-color: #353535;
+    flex-direction: column;
+}
+
+.montage-track-list-header {
+    height: 24px;
+    min-height: 24px;
+    max-height: 24px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 8px;
+    padding-right: 8px;
+    background-color: #262626;
+    border-bottom-width: 1px;
+    border-bottom-color: #353535;
+}
+
+.montage-track-headers-scroll-view {
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+.montage-track-headers-content-wrapper {
+    flex-direction: column;
+    position: relative;
+}
+
+.montage-track-reorder-line {
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background-color: #3F8CFF;
+    picking-mode: ignore;
+    display: none;
+}
+
+.montage-track-reorder-dot {
+    position: absolute;
+    left: 2px;
+    top: -3px;
+    width: 8px;
+    height: 8px;
+    border-radius: 4px;
+    background-color: #3F8CFF;
+    border-width: 1px;
+    border-color: #FFFFFF;
+    picking-mode: ignore;
+}
+
+.montage-timeline-right-column {
+    flex-grow: 1;
+    flex-shrink: 1;
+    overflow: hidden;
+    flex-direction: column;
+    background-color: #202020;
+}
+
+.montage-ruler-area-container {
+    flex-grow: 1;
+    height: 24px;
+    min-height: 24px;
+    max-height: 24px;
+    position: relative;
+    overflow: hidden;
+    background-color: #242424;
+    border-bottom-width: 1px;
+    border-bottom-color: #353535;
+}
+
+.montage-ruler-content {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    height: 100%;
+    cursor: ew-resize;
+}
+
+.montage-ruler-tick-label {
+    position: absolute;
+    font-size: 9px;
+    color: #999999;
+    -unity-font-style: normal;
+    padding: 0;
+    margin: 0;
+}
+
+.montage-playhead-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background-color: #3F8CFF;
+    picking-mode: ignore;
+}
+
+.montage-playhead-cap {
+    position: absolute;
+    top: 0;
+    width: 10px;
+    height: 12px;
+    margin-left: -4px;
+    background-color: #3F8CFF;
+    border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
+    picking-mode: ignore;
+}
+
+.montage-track-header {
+    width: 220px;
+    min-width: 220px;
+    max-width: 220px;
+    height: 28px;
+    min-height: 28px;
+    max-height: 28px;
+    border-bottom-width: 1px;
+    border-bottom-color: #1a1a1a;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 8px;
+    padding-right: 6px;
+    background-color: #222222;
+}
+
+.montage-track-header:hover {
+    background-color: #272727;
+}
+
+.montage-track-header-selected {
+    background-color: #2D3238;
+    border-left-width: 3px;
+    border-left-color: #4FC3F7;
+}
+
+.montage-track-title-box {
+    flex-direction: row;
+    align-items: center;
+    flex-grow: 1;
+    overflow: hidden;
+}
+
+.montage-track-title {
+    color: #CCCCCC;
+    font-size: 11px;
+    -unity-font-style: bold;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.montage-track-btn-toggle {
+    width: 20px;
+    height: 18px;
+    padding: 0;
+    margin-right: 2px;
+    border-radius: 2px;
+    border-width: 1px;
+    border-color: #3C3C3C;
+    background-color: #282828;
+    color: #888888;
+    font-size: 10px;
+    -unity-text-align: middle-center;
+}
+
+.montage-track-btn-toggle:hover {
+    background-color: #383838;
+    color: #DDDDDD;
+}
+
+.montage-track-btn-toggle-active {
+    background-color: #7A3535;
+    border-color: #9C4545;
+    color: #FFAAAA;
+}
+
+.montage-tracks-scroll-view {
+    flex-grow: 1;
+}
+
+.montage-tracks-content-wrapper {
+    position: relative;
+    flex-direction: column;
+    min-width: 100%;
+    min-height: 100%;
+    flex-grow: 1;
+}
+
+.montage-track-content {
+    position: relative;
+    height: 28px;
+    min-height: 28px;
+    max-height: 28px;
+    background-color: #242424;
+    border-bottom-width: 1px;
+    border-bottom-color: #1a1a1a;
+}
+
+.montage-track-content:hover {
+    background-color: #282828;
+}
+
+.montage-track-content-selected {
+    background-color: #232f3e;
+}
+
+.montage-action-block {
+    position: absolute;
+    top: 2px;
+    bottom: 2px;
+    height: 24px;
+    border-radius: 3px;
+    background-color: #3a4454;
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.15);
+    border-bottom-width: 3px;
+    border-bottom-color: #4CAF50;
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    cursor: pan;
+}
+
+.montage-action-block:hover {
+    border-color: rgba(255, 255, 255, 0.5);
+}
+
+.montage-action-block-selected {
+    border-color: #FFCC00;
+    border-width: 2px;
+}
+
+.montage-action-block-disabled {
+    opacity: 0.35;
+}
+
+.montage-action-block-label {
+    color: #FFFFFF;
+    font-size: 11px;
+    -unity-text-align: middle-center;
+    padding-left: 4px;
+    padding-right: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    picking-mode: ignore;
+}
+
+.montage-resize-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    background-color: transparent;
+}
+
+.montage-resize-handle-left {
+    left: 0;
+    cursor: resize-horizontal;
+}
+
+.montage-resize-handle-right {
+    right: 0;
+    cursor: resize-horizontal;
+}
+
+.montage-resize-handle:hover {
+    background-color: rgba(255, 255, 255, 0.3);
+}
+
+/* ========================================================================= */
+/* 6. Section Split Line & Marker Overlay (分段切分线与标记)                 */
+/* ========================================================================= */
+
+.montage-section-track-header {
+    width: 220px;
+    min-width: 220px;
+    max-width: 220px;
+    height: 24px;
+    min-height: 24px;
+    max-height: 24px;
+    border-bottom-width: 1px;
+    border-bottom-color: #1a1a1a;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 8px;
+    padding-right: 6px;
+    background-color: #1a222c;
+}
+
+.montage-section-track-title {
+    color: #79a6db;
+    font-size: 11px;
+    -unity-font-style: bold;
+}
+
+.montage-section-track-content {
+    position: relative;
+    height: 24px;
+    min-height: 24px;
+    max-height: 24px;
+    background-color: #182029;
+    border-bottom-width: 1px;
+    border-bottom-color: #1a1a1a;
+}
+
+.montage-section-track-label {
+    position: absolute;
+    font-size: 10px;
+    color: #8daecf;
+    -unity-font-style: bold;
+}
+
+.montage-section-split-handle {
+    position: absolute;
+    top: 2px;
+    width: 14px;
+    height: 18px;
+    margin-left: -7px;
+    background-color: #E28743;
+    border-radius: 3px;
+    align-items: center;
+    justify-content: center;
+    cursor: ew-resize;
+    z-index: 10;
+}
+
+.montage-section-split-handle:hover {
+    background-color: #F89B58;
+    scale: 1.1 1.1;
+}
+
+.montage-section-split-handle-selected {
+    background-color: #FFD166;
+    border-width: 1px;
+    border-color: #FFFFFF;
+}
+
+/* ========================================================================= */
+/* 7. Action Inspector Panel (动作块详情面板)                                */
+/* ========================================================================= */
+
+.montage-inspector-header {
+    padding: 10px;
+    background-color: #1F1F1F;
+    border-bottom-width: 1px;
+    border-bottom-color: #353535;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.montage-inspector-title {
+    font-size: 13px;
+    -unity-font-style: bold;
+    color: #E0E0E0;
+}
+
+.montage-inspector-body {
+    flex-grow: 1;
+    padding: 10px;
+}
+
+.montage-empty-hint {
+    color: #777777;
+    font-size: 12px;
+    -unity-text-align: middle-center;
+    margin-top: 40px;
+}
+
+.montage-empty-tracks-container {
+    flex-grow: 1;
+    align-items: center;
+    justify-content: center;
+    padding: 30px;
+}
+
+.montage-empty-tracks-card {
+    background-color: #282828;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: #383838;
+    padding: 24px;
+    align-items: center;
+    min-width: 320px;
+}
+
+.montage-empty-tracks-title {
+    font-size: 14px;
+    -unity-font-style: bold;
+    color: #DDDDDD;
+    margin-bottom: 8px;
+}
+
+.montage-empty-tracks-desc {
+    font-size: 11px;
+    color: #888888;
+    margin-bottom: 16px;
+    -unity-text-align: middle-center;
+}
+
+.montage-empty-tracks-btn-group {
+    flex-direction: row;
+}
+
+.montage-empty-tracks-btn {
+    height: 30px;
+    padding-left: 14px;
+    padding-right: 14px;
+    margin-left: 4px;
+    margin-right: 4px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+.montage-toolbar-btn {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    height: 22px;
+    padding-left: 8px;
+    padding-right: 8px;
+    margin-left: 2px;
+    margin-right: 2px;
+    border-radius: 3px;
+    border-width: 1px;
+    border-color: #3C3C3C;
+    background-color: #2C2C2C;
+    color: #DDDDDD;
+    font-size: 11px;
+}
+
+.montage-toolbar-btn:hover {
+    background-color: #3C3C3C;
+    border-color: #555555;
+    color: #FFFFFF;
+}
+
+.montage-primary-btn {
+    background-color: #244C78;
+    border-color: #3567A0;
+    color: #BBE0FF;
+}
+
+.montage-primary-btn:hover {
+    background-color: #2D5E94;
+    border-color: #427CBF;
+    color: #FFFFFF;
+}
+
+.montage-inspector-banner {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    background-color: #2A2A2A;
+    border-radius: 4px;
+    border-left-width: 4px;
+    border-left-color: #4FC3F7;
+    margin-bottom: 10px;
+}
+
+.montage-inspector-banner-title {
+    font-size: 13px;
+    -unity-font-style: bold;
+    color: #FFFFFF;
+}
+
+.montage-inspector-card {
+    background-color: #242424;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: #333333;
+    padding: 10px;
+    margin-bottom: 10px;
+}
+
+.montage-inspector-foldout {
+    background-color: #242424;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: #333333;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+}
+
+.montage-inspector-foldout > .unity-foldout__toggle {
+    margin-left: -2px;
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom-width: 1px;
+    border-bottom-color: #303030;
+}
+
+.montage-inspector-foldout > .unity-foldout__toggle > .unity-foldout__text {
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: #90CAF9;
+}
+
+.montage-inspector-card-header {
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: #90CAF9;
+    margin-bottom: 8px;
+    padding-bottom: 4px;
+    border-bottom-width: 1px;
+    border-bottom-color: #303030;
+}
+
+.montage-inspector-row {
+    flex-direction: row;
+    margin-bottom: 6px;
+    align-items: center;
+}
+
+.montage-inspector-col {
+    flex: 1;
+    margin-right: 8px;
+}
+
+.montage-inspector-col:last-child {
+    margin-right: 0;
+}
+
+.montage-timing-field {
+    flex-direction: row;
+    align-items: center;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+
+.montage-timing-field > .unity-base-field__label {
+    min-width: 0;
+    width: auto;
+    padding-right: 6px;
+    font-size: 11px;
+    color: #CCCCCC;
+    -unity-text-align: middle-left;
+}
+
+.montage-timing-field > .unity-base-field__input {
+    flex-grow: 1;
+    min-width: 40px;
+}
+
+.montage-inspector-time-hint {
+    font-size: 10px;
+    color: #888888;
+    margin-top: 2px;
+    margin-bottom: 6px;
+}

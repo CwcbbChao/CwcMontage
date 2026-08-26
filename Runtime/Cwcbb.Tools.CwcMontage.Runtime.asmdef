@@ -1,0 +1,14 @@
+{
+    "name": "Cwcbb.Tools.CwcMontage.Runtime",
+    "rootNamespace": "Cwcbb.Tools.CwcMontage",
+    "references": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
