@@ -671,7 +671,6 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _isPlaying = false;
             ExitAllActiveActionBlocks();
             MontageAudioPreviewUtility.StopAllClips();
-            MontageObjectPool.ClearPreviewPool();
 
             if (_playableGraph.IsValid())
             {
@@ -1066,7 +1065,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 _playableGraph.Evaluate();
             }
 
-            // 区间扫掠评估所有动作块
+            // 区间扫掠评估所有动作块（调用专用视口预览生命周期）
             var context = CreateCurrentContext();
 
             for (int i = 0; i < _runtimeActionBlocks.Count; i++)
@@ -1081,20 +1080,20 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 {
                     if (!_activeActionBlocks.Contains(blockData))
                     {
-                        if (action.CanEnter(context))
+                        if (action.CanPreviewEnter(context))
                         {
-                            action.OnEnter(context);
+                            action.OnPreviewEnter(context);
                             _activeActionBlocks.Add(blockData);
                         }
                     }
                     else
                     {
-                        action.OnUpdate(context, deltaTime);
+                        action.OnPreviewUpdate(context, deltaTime);
                     }
                 }
                 else if (_activeActionBlocks.Contains(blockData))
                 {
-                    action.OnExit(context);
+                    action.OnPreviewExit(context);
                     _activeActionBlocks.Remove(blockData);
                 }
             }
@@ -1107,7 +1106,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             var context = CreateCurrentContext();
             foreach (var block in _activeActionBlocks)
             {
-                block?.Action?.OnExit(context);
+                block?.Action?.OnPreviewExit(context);
             }
             _activeActionBlocks.Clear();
         }

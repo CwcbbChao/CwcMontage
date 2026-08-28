@@ -117,7 +117,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <summary>
         /// 根据当前的 AttachMode 计算在 Spawn 时应该设置的目标父级 Transform。
         /// </summary>
-        protected Transform GetSpawnParent(in MontageActionContext context)
+        protected Transform GetSpawnParent(in MontageActionContext context, bool isPreview = false)
         {
             if (_attachMode == MontageAttachMode.FollowTarget)
             {
@@ -125,11 +125,11 @@ namespace Cwcbb.Tools.CwcMontage
             }
 
             // 非 FollowTarget 模式：在编辑器预览时挂在宿主下隔离，在运行时保持 null（挂在池根节点下）
-            return context.IsPreview ? context.TargetObject.transform : null;
+            return isPreview ? context.TargetObject.transform : null;
         }
 
         /// <summary>
-        /// 在 OnUpdate 中调用，根据 AttachMode 决定是否在播放过程中动态更新实例在世界空间的位置与旋转。
+        /// 在 OnUpdate 或 OnPreviewUpdate 中调用，根据 AttachMode 决定是否在播放过程中动态更新实例在世界空间的位置与旋转。
         /// </summary>
         /// <param name="instance">生成的 GameObject 实例</param>
         /// <param name="context">当前动画上下文</param>
@@ -171,6 +171,12 @@ namespace Cwcbb.Tools.CwcMontage
         public override void OnExit(in MontageActionContext context)
         {
             base.OnExit(context);
+            _cachedTargetBone = null;
+        }
+
+        public override void OnPreviewExit(in MontageActionContext context)
+        {
+            base.OnPreviewExit(context);
             _cachedTargetBone = null;
         }
 

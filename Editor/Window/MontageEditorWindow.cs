@@ -401,7 +401,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _activeUI.OnRepaintRequested += Repaint;
             _activeUI.OnAssetModified += () =>
             {
-                titleContent = new GUIContent($"{currentAsset.name}* - Montage Editor");
+                titleContent = new GUIContent($"{currentAsset.name} - Montage Editor");
             };
 
             _contentContainer.Add(_activeUI.Root);

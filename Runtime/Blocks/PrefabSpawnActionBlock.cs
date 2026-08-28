@@ -66,7 +66,7 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
 
-        #region 动作块生命周期
+        #region 运行时生命周期 (由 MontagePlayer 调度)
 
         public override bool CanEnter(in MontageActionContext context)
         {
@@ -87,16 +87,15 @@ namespace Cwcbb.Tools.CwcMontage
             // 1. 基类解析挂点与计算空间变换
             ResolveTargetBone(context);
             CalculateWorldTransform(out Vector3 worldPos, out Quaternion worldRot);
-            Transform attachParent = GetSpawnParent(context);
+            Transform attachParent = GetSpawnParent(context, isPreview: false);
 
-            // 2. 从对象池生成
+            // 2. 从运行时对象池生成
             _spawnedInstance = MontageObjectPool.Spawn(
                 _prefab,
                 worldPos,
                 worldRot,
                 attachParent,
-                1.0f,
-                context.IsPreview);
+                1.0f);
 
             if (_spawnedInstance == null)
             {
@@ -122,7 +121,7 @@ namespace Cwcbb.Tools.CwcMontage
                 _elapsedTime += deltaTime;
                 if (_elapsedTime >= _customDuration)
                 {
-                    MontageObjectPool.Recycle(_spawnedInstance, context.IsPreview);
+                    MontageObjectPool.Recycle(_spawnedInstance);
                     _spawnedInstance = null;
                 }
             }
@@ -132,15 +131,94 @@ namespace Cwcbb.Tools.CwcMontage
         {
             if (_spawnedInstance != null)
             {
-                // 在编辑器预览模式下，无论任何 Lifecycle 策略均强制安全回收，杜绝视口残留孤儿对象
-                if (context.IsPreview || _lifecycle == MontageSpawnLifecycle.RecycleOnBlockExit)
+                if (_lifecycle == MontageSpawnLifecycle.RecycleOnBlockExit)
                 {
-                    MontageObjectPool.Recycle(_spawnedInstance, context.IsPreview);
+                    MontageObjectPool.Recycle(_spawnedInstance);
                     _spawnedInstance = null;
                 }
             }
 
             base.OnExit(context);
+        }
+
+        #endregion
+
+        #region 编辑器视口预览生命周期 (由 MontageEditorUI 调度)
+
+        public override bool CanPreviewEnter(in MontageActionContext context)
+        {
+            return base.CanPreviewEnter(context) && _prefab != null;
+        }
+
+        public override void OnPreviewEnter(in MontageActionContext context)
+        {
+            base.OnPreviewEnter(context);
+
+            if (_prefab == null)
+            {
+                return;
+            }
+
+            _elapsedTime = 0f;
+
+            // 1. 视口挂点解析与空间变换计算
+            ResolveTargetBone(context);
+            CalculateWorldTransform(out Vector3 worldPos, out Quaternion worldRot);
+            Transform attachParent = GetSpawnParent(context, isPreview: true);
+            if (attachParent == null && context.TargetObject != null)
+            {
+                attachParent = context.TargetObject.transform;
+            }
+
+            // 2. 在私有视口场景锚点下即时实例化，避免跨场景对象池污染
+            _spawnedInstance = UnityEngine.Object.Instantiate(
+                _prefab,
+                worldPos,
+                worldRot,
+                attachParent);
+
+            if (_spawnedInstance == null)
+            {
+                return;
+            }
+
+            _spawnedInstance.name = _prefab.name;
+            _spawnedInstance.hideFlags = HideFlags.HideAndDontSave;
+            _spawnedInstance.transform.localScale = Vector3.Scale(_prefab.transform.localScale, Scale);
+        }
+
+        public override void OnPreviewUpdate(in MontageActionContext context, float deltaTime)
+        {
+            if (_spawnedInstance == null)
+            {
+                return;
+            }
+
+            // 1. 视口动态位置更新
+            UpdateSpatialTransform(_spawnedInstance, in context);
+
+            // 2. 自定义时长倒计时回收
+            if (_lifecycle == MontageSpawnLifecycle.CustomDuration)
+            {
+                _elapsedTime += deltaTime;
+                if (_elapsedTime >= _customDuration)
+                {
+                    UnityEngine.Object.DestroyImmediate(_spawnedInstance);
+                    _spawnedInstance = null;
+                }
+            }
+        }
+
+        public override void OnPreviewExit(in MontageActionContext context)
+        {
+            if (_spawnedInstance != null)
+            {
+                // 在编辑器预览模式下，强制即时安全销毁，杜绝视口残留孤儿对象
+                UnityEngine.Object.DestroyImmediate(_spawnedInstance);
+                _spawnedInstance = null;
+            }
+
+            base.OnPreviewExit(context);
         }
 
         #endregion

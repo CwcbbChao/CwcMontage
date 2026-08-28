@@ -14,19 +14,13 @@ namespace Cwcbb.Tools.CwcMontage
         #region 常量与静态字段
 
         private const string RUNTIME_ROOT_NAME = "[Global_Montage_ObjectPool]";
-        private const string PREVIEW_ROOT_NAME = "[Preview_Montage_ObjectPool]";
 
         private static Transform _runtimeRoot;
-        private static Transform _previewRoot;
 
         private static readonly Dictionary<int, Stack<GameObject>> _runtimePrefabPools = new(32);
-        private static readonly Dictionary<int, Stack<GameObject>> _previewPrefabPools = new(32);
-
         private static readonly Dictionary<int, int> _instanceToPrefabMap = new(128);
         private static readonly Dictionary<int, Vector3> _prefabInitialScaleMap = new(32);
-
         private static readonly Queue<AudioSource> _audioSourcePool = new(16);
-        private static readonly List<GameObject> _activePreviewInstances = new(32);
 
         #endregion
 
@@ -52,44 +46,25 @@ namespace Cwcbb.Tools.CwcMontage
             }
         }
 
-        /// <summary>
-        /// 编辑器预览对象池根节点（非运行模式下专用）。
-        /// </summary>
-        public static Transform PreviewRoot
-        {
-            get
-            {
-                if (_previewRoot == null)
-                {
-                    var go = new GameObject(PREVIEW_ROOT_NAME);
-                    go.hideFlags = HideFlags.HideAndDontSave;
-                    _previewRoot = go.transform;
-                }
-                return _previewRoot;
-            }
-        }
-
         #endregion
 
-        #region 公共方法 (GameObject 生成与回收)
+        #region 公共方法 (GameObject 生成与回收 - 运行时对象池)
 
         /// <summary>
-        /// 从对象池中生成或复用一个 Prefab 实例。
+        /// 从对象池中生成或复用一个 Prefab 实例（运行时专用）。
         /// </summary>
         /// <param name="prefab">目标预制件</param>
         /// <param name="position">世界坐标</param>
         /// <param name="rotation">世界旋转</param>
         /// <param name="parent">目标父级 Transform（可选）</param>
         /// <param name="scaleMultiplier">缩放倍率</param>
-        /// <param name="isPreview">是否处于编辑器预览模式</param>
         /// <returns>实例化或取出的 GameObject 实例</returns>
         public static GameObject Spawn(
             GameObject prefab,
             Vector3 position,
             Quaternion rotation,
             Transform parent = null,
-            float scaleMultiplier = 1.0f,
-            bool isPreview = false)
+            float scaleMultiplier = 1.0f)
         {
             if (prefab == null)
             {
@@ -98,12 +73,11 @@ namespace Cwcbb.Tools.CwcMontage
             }
 
             int prefabId = prefab.GetInstanceID();
-            var targetPoolDict = isPreview ? _previewPrefabPools : _runtimePrefabPools;
 
-            if (!targetPoolDict.TryGetValue(prefabId, out var stack))
+            if (!_runtimePrefabPools.TryGetValue(prefabId, out var stack))
             {
                 stack = new Stack<GameObject>(16);
-                targetPoolDict[prefabId] = stack;
+                _runtimePrefabPools[prefabId] = stack;
             }
 
             if (!_prefabInitialScaleMap.TryGetValue(prefabId, out Vector3 initialScale))
@@ -122,19 +96,12 @@ namespace Cwcbb.Tools.CwcMontage
                 }
             }
 
-            Transform poolRoot = isPreview ? PreviewRoot : RuntimeRoot;
-            Transform targetParent = parent != null ? parent : poolRoot;
+            Transform targetParent = parent != null ? parent : RuntimeRoot;
 
             if (instance == null)
             {
                 instance = UnityEngine.Object.Instantiate(prefab, position, rotation, targetParent);
                 instance.name = prefab.name;
-
-                if (isPreview)
-                {
-                    instance.hideFlags = HideFlags.HideAndDontSave;
-                }
-
                 _instanceToPrefabMap[instance.GetInstanceID()] = prefabId;
             }
             else
@@ -158,20 +125,14 @@ namespace Cwcbb.Tools.CwcMontage
                 poolables[i].OnSpawnFromMontagePool();
             }
 
-            if (isPreview)
-            {
-                _activePreviewInstances.Add(instance);
-            }
-
             return instance;
         }
 
         /// <summary>
-        /// 将实例归还回对象池。
+        /// 将实例归还回对象池（运行时专用）。
         /// </summary>
         /// <param name="instance">要回收的 GameObject 实例</param>
-        /// <param name="isPreview">是否处于编辑器预览模式</param>
-        public static void Recycle(GameObject instance, bool isPreview = false)
+        public static void Recycle(GameObject instance)
         {
             if (instance == null)
             {
@@ -194,11 +155,9 @@ namespace Cwcbb.Tools.CwcMontage
             }
 
             int instanceId = instance.GetInstanceID();
-            var targetPoolDict = isPreview ? _previewPrefabPools : _runtimePrefabPools;
-            Transform poolRoot = isPreview ? PreviewRoot : RuntimeRoot;
 
             if (_instanceToPrefabMap.TryGetValue(instanceId, out int prefabId) &&
-                targetPoolDict.TryGetValue(prefabId, out var stack))
+                _runtimePrefabPools.TryGetValue(prefabId, out var stack))
             {
                 if (_prefabInitialScaleMap.TryGetValue(prefabId, out Vector3 initialScale))
                 {
@@ -206,9 +165,9 @@ namespace Cwcbb.Tools.CwcMontage
                 }
 
                 instance.SetActive(false);
-                if (instance.transform.parent != poolRoot)
+                if (instance.transform.parent != RuntimeRoot)
                 {
-                    instance.transform.SetParent(poolRoot, false);
+                    instance.transform.SetParent(RuntimeRoot, false);
                 }
 
                 stack.Push(instance);
@@ -216,11 +175,6 @@ namespace Cwcbb.Tools.CwcMontage
             else
             {
                 UnityEngine.Object.Destroy(instance);
-            }
-
-            if (isPreview)
-            {
-                _activePreviewInstances.Remove(instance);
             }
         }
 
@@ -286,46 +240,6 @@ namespace Cwcbb.Tools.CwcMontage
             }
 
             _audioSourcePool.Enqueue(src);
-        }
-
-        #endregion
-
-        #region 公共方法 (编辑器预览与清理)
-
-        /// <summary>
-        /// 清理编辑器预览模式下产生的所有活跃对象与缓存池，确保视口重置或退出时零残留。
-        /// </summary>
-        public static void ClearPreviewPool()
-        {
-            for (int i = _activePreviewInstances.Count - 1; i >= 0; i--)
-            {
-                var inst = _activePreviewInstances[i];
-                if (inst != null)
-                {
-                    UnityEngine.Object.DestroyImmediate(inst);
-                }
-            }
-            _activePreviewInstances.Clear();
-
-            foreach (var kv in _previewPrefabPools)
-            {
-                var stack = kv.Value;
-                while (stack.Count > 0)
-                {
-                    var item = stack.Pop();
-                    if (item != null)
-                    {
-                        UnityEngine.Object.DestroyImmediate(item);
-                    }
-                }
-            }
-            _previewPrefabPools.Clear();
-
-            if (_previewRoot != null)
-            {
-                UnityEngine.Object.DestroyImmediate(_previewRoot.gameObject);
-                _previewRoot = null;
-            }
         }
 
         #endregion

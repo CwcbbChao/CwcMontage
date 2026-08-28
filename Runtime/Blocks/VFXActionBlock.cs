@@ -60,7 +60,7 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
 
-        #region 动作块生命周期
+        #region 运行时生命周期 (由 MontagePlayer 调度)
 
         public override bool CanEnter(in MontageActionContext context)
         {
@@ -79,16 +79,15 @@ namespace Cwcbb.Tools.CwcMontage
             // 1. 基类解析挂点与计算空间变换
             ResolveTargetBone(context);
             CalculateWorldTransform(out Vector3 worldPos, out Quaternion worldRot);
-            Transform attachParent = GetSpawnParent(context);
+            Transform attachParent = GetSpawnParent(context, isPreview: false);
 
-            // 2. 从对象池取出实例
+            // 2. 从运行时对象池取出实例
             _spawnedInstance = MontageObjectPool.Spawn(
                 _vfxPrefab,
                 worldPos,
                 worldRot,
                 attachParent,
-                1.0f,
-                context.IsPreview);
+                1.0f);
 
             if (_spawnedInstance == null)
             {
@@ -106,17 +105,7 @@ namespace Cwcbb.Tools.CwcMontage
                 var ps = _cachedParticleSystems[i];
                 var main = ps.main;
                 main.simulationSpeed = simRate;
-
-                if (!context.IsPreview)
-                {
-                    ps.Play(true);
-                }
-                else
-                {
-                    ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
-                    ps.Clear(true);
-                    ps.Play(true);
-                }
+                ps.Play(true);
             }
         }
 
@@ -149,23 +138,6 @@ namespace Cwcbb.Tools.CwcMontage
                     }
                 }
             }
-
-            // 3. 编辑器非运行模式下，手动驱动粒子仿真，实现 3D 视口所见即所得
-            if (context.IsPreview)
-            {
-                float effectiveStep = deltaTime * (_playbackRateSynced ? context.PlaybackRate : 1.0f);
-                if (effectiveStep > 0.0001f)
-                {
-                    for (int i = 0; i < _cachedParticleSystems.Length; i++)
-                    {
-                        var ps = _cachedParticleSystems[i];
-                        if (ps != null)
-                        {
-                            ps.Simulate(effectiveStep, true, false);
-                        }
-                    }
-                }
-            }
         }
 
         public override void OnExit(in MontageActionContext context)
@@ -192,12 +164,140 @@ namespace Cwcbb.Tools.CwcMontage
                     }
                 }
 
-                MontageObjectPool.Recycle(_spawnedInstance, context.IsPreview);
+                MontageObjectPool.Recycle(_spawnedInstance);
                 _spawnedInstance = null;
             }
 
             _cachedParticleSystems = null;
             base.OnExit(context);
+        }
+
+        #endregion
+
+        #region 编辑器视口预览生命周期 (由 MontageEditorUI 调度)
+
+        public override bool CanPreviewEnter(in MontageActionContext context)
+        {
+            return base.CanPreviewEnter(context) && _vfxPrefab != null;
+        }
+
+        public override void OnPreviewEnter(in MontageActionContext context)
+        {
+            base.OnPreviewEnter(context);
+
+            if (_vfxPrefab == null)
+            {
+                return;
+            }
+
+            // 1. 基类解析挂点与计算空间变换
+            ResolveTargetBone(context);
+            CalculateWorldTransform(out Vector3 worldPos, out Quaternion worldRot);
+            Transform attachParent = GetSpawnParent(context, isPreview: true);
+            if (attachParent == null && context.TargetObject != null)
+            {
+                attachParent = context.TargetObject.transform;
+            }
+
+            // 2. 在私有视口场景锚点下即时实例化，避免跨场景对象池污染
+            _spawnedInstance = UnityEngine.Object.Instantiate(
+                _vfxPrefab,
+                worldPos,
+                worldRot,
+                attachParent);
+
+            if (_spawnedInstance == null)
+            {
+                return;
+            }
+
+            _spawnedInstance.name = _vfxPrefab.name;
+            _spawnedInstance.hideFlags = HideFlags.HideAndDontSave;
+            _spawnedInstance.transform.localScale = Vector3.Scale(_vfxPrefab.transform.localScale, Scale);
+
+            // 3. 初始化粒子系统为初始状态（暂停待步进）
+            _cachedParticleSystems = _spawnedInstance.GetComponentsInChildren<ParticleSystem>(true);
+            float simRate = _playbackRateSynced ? Mathf.Max(0.001f, context.PlaybackRate) : 1.0f;
+
+            for (int i = 0; i < _cachedParticleSystems.Length; i++)
+            {
+                var ps = _cachedParticleSystems[i];
+                var main = ps.main;
+                main.simulationSpeed = simRate;
+                ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                ps.Clear(true);
+                ps.Play(true);
+            }
+        }
+
+        public override void OnPreviewUpdate(in MontageActionContext context, float deltaTime)
+        {
+            if (_spawnedInstance == null)
+            {
+                return;
+            }
+
+            // 1. 动态位置追踪与更新
+            UpdateSpatialTransform(_spawnedInstance, in context);
+
+            if (_cachedParticleSystems == null || _cachedParticleSystems.Length == 0)
+            {
+                return;
+            }
+
+            // 2. 同步模拟速率
+            if (_playbackRateSynced)
+            {
+                float simRate = Mathf.Max(0.001f, context.PlaybackRate);
+                for (int i = 0; i < _cachedParticleSystems.Length; i++)
+                {
+                    var ps = _cachedParticleSystems[i];
+                    if (ps != null)
+                    {
+                        var main = ps.main;
+                        main.simulationSpeed = simRate;
+                    }
+                }
+            }
+
+            // 3. 编辑器非运行模式下，手动驱动粒子仿真
+            float effectiveStep = deltaTime * (_playbackRateSynced ? context.PlaybackRate : 1.0f);
+            if (effectiveStep > 0.0001f)
+            {
+                for (int i = 0; i < _cachedParticleSystems.Length; i++)
+                {
+                    var ps = _cachedParticleSystems[i];
+                    if (ps != null)
+                    {
+                        ps.Simulate(effectiveStep, true, false);
+                    }
+                }
+            }
+        }
+
+        public override void OnPreviewExit(in MontageActionContext context)
+        {
+            if (_spawnedInstance != null)
+            {
+                if (_cachedParticleSystems != null)
+                {
+                    for (int i = 0; i < _cachedParticleSystems.Length; i++)
+                    {
+                        var ps = _cachedParticleSystems[i];
+                        if (ps != null)
+                        {
+                            ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                            ps.Clear(true);
+                        }
+                    }
+                }
+
+                UnityEngine.Object.DestroyImmediate(_spawnedInstance);
+                _spawnedInstance = null;
+            }
+
+            _cachedParticleSystems = null;
+            base.OnPreviewExit(context);
         }
 
         #endregion

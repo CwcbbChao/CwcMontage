@@ -51,10 +51,10 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
 
-        #region 公共方法 (生命周期钩子)
+        #region 公共方法 (运行时生命周期钩子)
 
         /// <summary>
-        /// 校验当前动作块是否满足进入执行的先决条件。
+        /// 校验当前动作块是否满足进入执行的先决条件（运行时专用）。
         /// </summary>
         /// <param name="context">当前动画帧执行上下文</param>
         /// <returns>若返回 false 则跳过本次触发</returns>
@@ -64,7 +64,7 @@ namespace Cwcbb.Tools.CwcMontage
         }
 
         /// <summary>
-        /// 当时间轴首次进入动作块时间区间时触发。
+        /// 当时间轴首次进入动作块时间区间时触发（运行时专用）。
         /// </summary>
         /// <param name="context">当前动画帧执行上下文</param>
         public virtual void OnEnter(in MontageActionContext context)
@@ -73,7 +73,7 @@ namespace Cwcbb.Tools.CwcMontage
         }
 
         /// <summary>
-        /// 在动作块有效时间区间内每帧持续更新。
+        /// 在动作块有效时间区间内每帧持续更新（运行时专用）。
         /// </summary>
         /// <param name="context">当前动画帧执行上下文</param>
         /// <param name="deltaTime">自上一帧经过的有效时间步长</param>
@@ -82,13 +82,56 @@ namespace Cwcbb.Tools.CwcMontage
         }
 
         /// <summary>
-        /// 当时间轴离开动作块时间区间、或动画被外部打断/跳转退出时触发。
+        /// 当时间轴离开动作块时间区间、或动画被外部打断/跳转退出时触发（运行时专用）。
         /// </summary>
         /// <param name="context">当前动画帧执行上下文</param>
         public virtual void OnExit(in MontageActionContext context)
         {
             _isActive = false;
         }
+
+        #endregion
+
+        #region 公共方法 (编辑器视口预览生命周期钩子)
+
+        /// <summary>
+        /// 校验当前动作块是否满足进入视口预览的先决条件（编辑器预览专用）。
+        /// </summary>
+        /// <param name="context">当前动画帧执行上下文</param>
+        /// <returns>若返回 false 则跳过本次预览触发</returns>
+        public virtual bool CanPreviewEnter(in MontageActionContext context)
+        {
+            return _isEnabled;
+        }
+
+        /// <summary>
+        /// 当编辑器视口时间轴首次进入动作块时间区间时触发（编辑器预览专用，默认空实现）。
+        /// </summary>
+        /// <param name="context">当前动画帧执行上下文</param>
+        public virtual void OnPreviewEnter(in MontageActionContext context)
+        {
+        }
+
+        /// <summary>
+        /// 在编辑器视口动作块有效时间区间内每帧持续更新（编辑器预览专用，默认空实现，用于粒子 Simulate 步进等）。
+        /// </summary>
+        /// <param name="context">当前动画帧执行上下文</param>
+        /// <param name="deltaTime">自上一帧经过的有效时间步长</param>
+        public virtual void OnPreviewUpdate(in MontageActionContext context, float deltaTime)
+        {
+        }
+
+        /// <summary>
+        /// 当编辑器视口时间轴离开动作块时间区间、停止或重置时触发（编辑器预览专用，默认空实现，用于清理视口临时实例）。
+        /// </summary>
+        /// <param name="context">当前动画帧执行上下文</param>
+        public virtual void OnPreviewExit(in MontageActionContext context)
+        {
+        }
+
+        #endregion
+
+        #region 公共方法 (克隆与实例化)
 
         /// <summary>
         /// 创建该动作块实例的独立深拷贝副本，供运行时独立播放使用。

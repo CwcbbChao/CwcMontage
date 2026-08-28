@@ -115,7 +115,7 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
 
-        #region 动作块生命周期
+        #region 运行时生命周期 (由 MontagePlayer 调度)
 
         public override bool CanEnter(in MontageActionContext context)
         {
@@ -133,14 +133,7 @@ namespace Cwcbb.Tools.CwcMontage
                 return;
             }
 
-            // 1. 编辑器非运行预览模式：通过专用预览驱动直接输出声音
-            if (context.IsPreview)
-            {
-                PreviewAudioPlayHandler?.Invoke(_selectedClip, _playMode == MontageAudioPlayMode.LoopDuringBlock);
-                return;
-            }
-
-            // 2. 运行时模式：从对象池获取 AudioSource 通道并配置播放
+            // 从对象池获取 AudioSource 通道并配置播放
             var boneTransform = MontageBoneUtility.FindBone(context.TargetObject, _attachBoneName);
             Vector3 spawnPos = boneTransform != null ? boneTransform.position : context.TargetObject.transform.position;
 
@@ -172,8 +165,6 @@ namespace Cwcbb.Tools.CwcMontage
 
         public override void OnUpdate(in MontageActionContext context, float deltaTime)
         {
-            if (context.IsPreview) return;
-
             // 单次播放模式若已自然播完，提前安全回收通道
             if (_playMode == MontageAudioPlayMode.OneShot && _activeAudioSource != null)
             {
@@ -189,19 +180,46 @@ namespace Cwcbb.Tools.CwcMontage
         {
             base.OnExit(context);
 
-            if (context.IsPreview)
-            {
-                if (_playMode == MontageAudioPlayMode.LoopDuringBlock)
-                {
-                    PreviewAudioStopHandler?.Invoke();
-                }
-                return;
-            }
-
             if (_activeAudioSource != null)
             {
                 MontageObjectPool.RecycleAudioSource(_activeAudioSource);
                 _activeAudioSource = null;
+            }
+
+            _selectedClip = null;
+        }
+
+        #endregion
+
+        #region 编辑器视口预览生命周期 (由 MontageEditorUI 调度)
+
+        public override bool CanPreviewEnter(in MontageActionContext context)
+        {
+            if (!base.CanPreviewEnter(context)) return false;
+            return _audioClip != null || (_randomAudioClips != null && _randomAudioClips.Count > 0);
+        }
+
+        public override void OnPreviewEnter(in MontageActionContext context)
+        {
+            base.OnPreviewEnter(context);
+
+            _selectedClip = SelectAudioClip();
+            if (_selectedClip == null)
+            {
+                return;
+            }
+
+            // 通过专用音频预览工具输出声音
+            PreviewAudioPlayHandler?.Invoke(_selectedClip, _playMode == MontageAudioPlayMode.LoopDuringBlock);
+        }
+
+        public override void OnPreviewExit(in MontageActionContext context)
+        {
+            base.OnPreviewExit(context);
+
+            if (_playMode == MontageAudioPlayMode.LoopDuringBlock)
+            {
+                PreviewAudioStopHandler?.Invoke();
             }
 
             _selectedClip = null;
