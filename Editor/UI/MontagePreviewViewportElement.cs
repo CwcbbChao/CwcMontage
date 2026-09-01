@@ -439,7 +439,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         {
             if (_gridMesh == null)
             {
-                _gridMesh = CreateGroundGridMesh(16f, 0.5f);
+                _gridMesh = CreateGroundGridMesh(20f, 1.0f);
             }
 
             if (_gridMaterial == null)
@@ -456,7 +456,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             }
         }
 
-        private Mesh CreateGroundGridMesh(float size = 16f, float step = 0.5f)
+        private Mesh CreateGroundGridMesh(float size = 20f, float step = 1.0f)
         {
             var mesh = new Mesh { name = "GroundGridMesh", hideFlags = HideFlags.HideAndDontSave };
             var vertices = new List<Vector3>();
