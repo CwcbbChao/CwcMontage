@@ -20,6 +20,11 @@ namespace Cwcbb.Tools.CwcMontage
         public readonly Animator Animator;
 
         /// <summary>
+        /// 绑定的协调器组件引用（若在编辑器视口预览或独立环境则可为空）。
+        /// </summary>
+        public readonly MontageCoordinator Coordinator;
+
+        /// <summary>
         /// 当前动画播放进行到的绝对时间（秒）。
         /// </summary>
         public readonly float CurrentTime;
@@ -63,10 +68,12 @@ namespace Cwcbb.Tools.CwcMontage
             float sectionProgress,
             float normalizedProgress,
             float playbackRate,
-            bool isPreview)
+            bool isPreview,
+            MontageCoordinator coordinator = null)
         {
             TargetObject = targetObject;
             Animator = animator;
+            Coordinator = coordinator;
             CurrentTime = currentTime;
             TotalDuration = totalDuration;
             CurrentSectionIndex = currentSectionIndex;
@@ -74,6 +81,21 @@ namespace Cwcbb.Tools.CwcMontage
             NormalizedProgress = normalizedProgress;
             PlaybackRate = playbackRate;
             IsPreview = isPreview;
+        }
+
+        /// <summary>
+        /// 极速安全获取目标核心大骨骼 Transform（绝对 0 GC 分配）。
+        /// 优先从 Coordinator 的数组缓存直取，无 Coordinator 时通过静态映射快速回退，绝不返回 null。
+        /// </summary>
+        /// <param name="targetBone">核心大骨骼枚举</param>
+        /// <returns>找到的骨骼 Transform（保底返回 TargetObject.transform）</returns>
+        public Transform GetTargetBone(MontageTargetBone targetBone)
+        {
+            if (Coordinator != null)
+            {
+                return Coordinator.GetTargetBone(targetBone);
+            }
+            return MontageBoneUtility.ResolveBone(TargetObject, Animator, targetBone);
         }
     }
 }

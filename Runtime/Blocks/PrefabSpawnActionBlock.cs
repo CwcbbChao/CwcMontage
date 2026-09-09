@@ -63,6 +63,7 @@ namespace Cwcbb.Tools.CwcMontage
         public GameObject Prefab => _prefab;
         public MontageSpawnLifecycle Lifecycle => _lifecycle;
         public float CustomDuration => _customDuration;
+        public GameObject SpawnedInstance => _spawnedInstance;
 
         #endregion
 
@@ -219,6 +220,47 @@ namespace Cwcbb.Tools.CwcMontage
             }
 
             base.OnPreviewExit(context);
+        }
+
+        public override void OnPreviewScrub(in MontageActionContext context, float localTime)
+        {
+            if (_spawnedInstance == null)
+            {
+                return;
+            }
+
+            UpdateSpatialTransform(_spawnedInstance, in context);
+            _elapsedTime = localTime;
+            if (_lifecycle == MontageSpawnLifecycle.CustomDuration)
+            {
+                _spawnedInstance.SetActive(_elapsedTime < _customDuration);
+            }
+        }
+
+        public override void OnPreviewParametersChanged(in MontageActionContext context)
+        {
+            if (_spawnedInstance == null)
+            {
+                return;
+            }
+
+            // 原地更新挂点与空间位置
+            UpdatePreviewTransform(_spawnedInstance, in context);
+
+            // 同步缩放
+            if (_prefab != null)
+            {
+                _spawnedInstance.transform.localScale = Vector3.Scale(_prefab.transform.localScale, Scale);
+            }
+        }
+
+        public override bool RequiresPreviewRecreate(MontageActionBlockBase newBlock)
+        {
+            if (newBlock is PrefabSpawnActionBlock newSp)
+            {
+                return _prefab != newSp._prefab;
+            }
+            return true;
         }
 
         #endregion

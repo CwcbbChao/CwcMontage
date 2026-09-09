@@ -43,12 +43,20 @@ namespace Cwcbb.Tools.CwcMontage
         [Tooltip("是否将粒子系统的模拟速度（simulationSpeed）与蒙太奇播放速率保持同步。")]
         [SerializeField] private bool _playbackRateSynced = true;
 
+        [Header("Clip Trimming & Stretching")]
+        [Tooltip("特效截取起始时间（秒）。")]
+        [SerializeField] private float _clipStartTime = 0.0f;
+
+        [Tooltip("特效截取结束时间（秒）。以此截取区间为基准定义 1.0x 原速时长，Block 长度提供等比缩放。")]
+        [SerializeField] private float _clipEndTime = 0.5f;
+
         #endregion
 
         #region 私有非序列化运行时字段
 
         [NonSerialized] private GameObject _spawnedInstance;
         [NonSerialized] private ParticleSystem[] _cachedParticleSystems;
+        [NonSerialized] private float _cachedNaturalDuration = -1f;
 
         #endregion
 
@@ -57,6 +65,21 @@ namespace Cwcbb.Tools.CwcMontage
         public GameObject VFXPrefab => _vfxPrefab;
         public MontageVFXStopBehavior StopBehavior => _stopBehavior;
         public bool PlaybackRateSynced => _playbackRateSynced;
+        public GameObject SpawnedInstance => _spawnedInstance;
+
+        public override bool IsTrimmableClip => true;
+
+        public override float ClipStartTime
+        {
+            get => _clipStartTime;
+            set => _clipStartTime = Mathf.Max(0f, value);
+        }
+
+        public override float ClipEndTime
+        {
+            get => _clipEndTime > 0.0001f ? _clipEndTime : Mathf.Max(0.1f, BlockDuration);
+            set => _clipEndTime = Mathf.Max(_clipStartTime + 0.001f, value);
+        }
 
         #endregion
 
@@ -96,9 +119,10 @@ namespace Cwcbb.Tools.CwcMontage
 
             _spawnedInstance.transform.localScale = Vector3.Scale(_vfxPrefab.transform.localScale, Scale);
 
-            // 3. 初始化并驱动 ParticleSystem
+            // 3. 初始化并驱动 ParticleSystem（自适应 Block 长度的时间缩放倍率）
             _cachedParticleSystems = _spawnedInstance.GetComponentsInChildren<ParticleSystem>(true);
-            float simRate = _playbackRateSynced ? Mathf.Max(0.001f, context.PlaybackRate) : 1.0f;
+            float speedScale = GetStretchSpeedMultiplier();
+            float simRate = speedScale * (_playbackRateSynced ? Mathf.Max(0.001f, context.PlaybackRate) : 1.0f);
 
             for (int i = 0; i < _cachedParticleSystems.Length; i++)
             {
@@ -124,18 +148,16 @@ namespace Cwcbb.Tools.CwcMontage
                 return;
             }
 
-            // 2. 同步播放速率变化
-            if (_playbackRateSynced)
+            // 2. 同步自适应缩放与播放速率变化
+            float speedScale = GetStretchSpeedMultiplier();
+            float simRate = speedScale * (_playbackRateSynced ? Mathf.Max(0.001f, context.PlaybackRate) : 1.0f);
+            for (int i = 0; i < _cachedParticleSystems.Length; i++)
             {
-                float simRate = Mathf.Max(0.001f, context.PlaybackRate);
-                for (int i = 0; i < _cachedParticleSystems.Length; i++)
+                var ps = _cachedParticleSystems[i];
+                if (ps != null)
                 {
-                    var ps = _cachedParticleSystems[i];
-                    if (ps != null)
-                    {
-                        var main = ps.main;
-                        main.simulationSpeed = simRate;
-                    }
+                    var main = ps.main;
+                    main.simulationSpeed = simRate;
                 }
             }
         }
@@ -215,9 +237,10 @@ namespace Cwcbb.Tools.CwcMontage
             _spawnedInstance.hideFlags = HideFlags.HideAndDontSave;
             _spawnedInstance.transform.localScale = Vector3.Scale(_vfxPrefab.transform.localScale, Scale);
 
-            // 3. 初始化粒子系统为初始状态（暂停待步进）
+            // 3. 初始化粒子系统为初始状态（暂停待步进，应用时间缩放）
             _cachedParticleSystems = _spawnedInstance.GetComponentsInChildren<ParticleSystem>(true);
-            float simRate = _playbackRateSynced ? Mathf.Max(0.001f, context.PlaybackRate) : 1.0f;
+            float speedScale = GetStretchSpeedMultiplier();
+            float simRate = speedScale * (_playbackRateSynced ? Mathf.Max(0.001f, context.PlaybackRate) : 1.0f);
 
             for (int i = 0; i < _cachedParticleSystems.Length; i++)
             {
@@ -246,22 +269,20 @@ namespace Cwcbb.Tools.CwcMontage
             }
 
             // 2. 同步模拟速率
-            if (_playbackRateSynced)
+            float speedScale = GetStretchSpeedMultiplier();
+            float simRate = speedScale * (_playbackRateSynced ? Mathf.Max(0.001f, context.PlaybackRate) : 1.0f);
+            for (int i = 0; i < _cachedParticleSystems.Length; i++)
             {
-                float simRate = Mathf.Max(0.001f, context.PlaybackRate);
-                for (int i = 0; i < _cachedParticleSystems.Length; i++)
+                var ps = _cachedParticleSystems[i];
+                if (ps != null)
                 {
-                    var ps = _cachedParticleSystems[i];
-                    if (ps != null)
-                    {
-                        var main = ps.main;
-                        main.simulationSpeed = simRate;
-                    }
+                    var main = ps.main;
+                    main.simulationSpeed = simRate;
                 }
             }
 
-            // 3. 编辑器非运行模式下，手动驱动粒子仿真
-            float effectiveStep = deltaTime * (_playbackRateSynced ? context.PlaybackRate : 1.0f);
+            // 3. 编辑器非运行模式下，手动驱动粒子自适应仿真
+            float effectiveStep = deltaTime * speedScale * (_playbackRateSynced ? context.PlaybackRate : 1.0f);
             if (effectiveStep > 0.0001f)
             {
                 for (int i = 0; i < _cachedParticleSystems.Length; i++)
@@ -298,6 +319,161 @@ namespace Cwcbb.Tools.CwcMontage
 
             _cachedParticleSystems = null;
             base.OnPreviewExit(context);
+        }
+
+        /// <summary>
+        /// 将粒子系统精准模拟到指定的时间点（编辑器非播放态 Scrub / Seek / 定格专用）。
+        /// </summary>
+        /// <param name="targetLocalTime">目标时间点（秒）</param>
+        public void SimulateToTime(float targetLocalTime)
+        {
+            if (_cachedParticleSystems == null || _cachedParticleSystems.Length == 0)
+            {
+                return;
+            }
+
+            targetLocalTime = Mathf.Max(0f, targetLocalTime);
+            for (int i = 0; i < _cachedParticleSystems.Length; i++)
+            {
+                var ps = _cachedParticleSystems[i];
+                if (ps != null)
+                {
+                    // restart = true: 从0重新模拟到 targetLocalTime，实现任意时刻绝对一致的确定性粒子切片
+                    ps.Simulate(targetLocalTime, true, true, true);
+                }
+            }
+        }
+
+        public override void OnPreviewScrub(in MontageActionContext context, float localTime)
+        {
+            if (_spawnedInstance == null)
+            {
+                return;
+            }
+
+            // 1. 同步空间位置
+            UpdateSpatialTransform(_spawnedInstance, in context);
+
+            // 2. 将动作块内部局部时间归一化到 [0, 1] 进度，再精确线性映射到用户截取的有效区间 [ClipStartTime, ClipEndTime]
+            float blockDur = Mathf.Max(0.0001f, BlockDuration);
+            float progress = Mathf.Clamp01(localTime / blockDur);
+            float targetTime = ClipStartTime + progress * EffectiveClipDuration;
+
+            // 3. 绝对时间精确模拟粒子切片
+            SimulateToTime(targetTime);
+        }
+
+        public override void OnPreviewParametersChanged(in MontageActionContext context)
+        {
+            if (_spawnedInstance == null)
+            {
+                return;
+            }
+
+            // 1. 原地更新空间变换与挂点骨骼，绝对不重新销毁或清空粒子
+            UpdatePreviewTransform(_spawnedInstance, in context);
+
+            // 2. 同步局部缩放倍率
+            if (_vfxPrefab != null)
+            {
+                _spawnedInstance.transform.localScale = Vector3.Scale(_vfxPrefab.transform.localScale, Scale);
+            }
+        }
+
+        public override bool RequiresPreviewRecreate(MontageActionBlockBase newBlock)
+        {
+            if (newBlock is VFXActionBlock newVfx)
+            {
+                if (_vfxPrefab != newVfx._vfxPrefab)
+                {
+                    _cachedNaturalDuration = -1f;
+                    return true;
+                }
+                return false;
+            }
+            return true;
+        }
+
+        #endregion
+
+        #region 时长分析与时间拉伸辅助计算
+
+        /// <summary>
+        /// 获取特效预制件中所有子粒子系统完整消散完毕的最大自然时长（秒）。
+        /// </summary>
+        public float GetNaturalDuration()
+        {
+            if (_cachedNaturalDuration > 0.001f)
+            {
+                return _cachedNaturalDuration;
+            }
+
+            if (_vfxPrefab == null)
+            {
+                return Mathf.Max(0.01f, BlockDuration);
+            }
+
+            _cachedNaturalDuration = CalculatePrefabTotalDuration(_vfxPrefab);
+            return _cachedNaturalDuration;
+        }
+
+        /// <summary>
+        /// 获取基于截取有效区间与当前动作块时长计算出的时间拉伸速率倍率（EffectiveClipDuration / BlockDuration）。
+        /// 兼容保留此方法，内部直接调用基类统一契约属性 SpeedMultiplier。
+        /// </summary>
+        public float GetStretchSpeedMultiplier()
+        {
+            return SpeedMultiplier;
+        }
+
+        /// <summary>
+        /// 递归深度扫描预制件层级下所有 ParticleSystem，计算从首颗粒子发射到最后一颗残余粒子彻底消散完毕的最大绝对耗时。
+        /// 耗时 = startDelay + duration + startLifetime
+        /// </summary>
+        public static float CalculatePrefabTotalDuration(GameObject prefab)
+        {
+            if (prefab == null) return 1.0f;
+            var systems = prefab.GetComponentsInChildren<ParticleSystem>(true);
+            if (systems == null || systems.Length == 0) return 1.0f;
+
+            float maxNonLooping = 0f;
+            float maxLooping = 0f;
+
+            for (int i = 0; i < systems.Length; i++)
+            {
+                var ps = systems[i];
+                if (ps == null) continue;
+                var main = ps.main;
+
+                float delay = main.startDelay.mode == ParticleSystemCurveMode.TwoConstants
+                    ? main.startDelay.constantMax
+                    : main.startDelay.constant;
+
+                float lifetime = main.startLifetime.mode == ParticleSystemCurveMode.TwoConstants
+                    ? main.startLifetime.constantMax
+                    : main.startLifetime.constant;
+
+                float duration = main.duration;
+
+                if (main.loop)
+                {
+                    maxLooping = Mathf.Max(maxLooping, delay + duration);
+                }
+                else
+                {
+                    maxNonLooping = Mathf.Max(maxNonLooping, delay + duration + lifetime);
+                }
+            }
+
+            // 优先使用非循环粒子的完整消散总时长；若整个预制体全部为循环粒子，则使用单圈循环周期
+            float result = maxNonLooping > 0.001f ? maxNonLooping : maxLooping;
+            return Mathf.Max(0.01f, result);
+        }
+
+        public override string GetTimingCustomHint()
+        {
+            if (_vfxPrefab == null) return null;
+            return $"Clip: {ClipStartTime:F2}s - {ClipEndTime:F2}s ({EffectiveClipDuration:F2}s) | Speed: {SpeedMultiplier:F2}x";
         }
 
         #endregion

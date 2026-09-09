@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace Cwcbb.Tools.CwcMontage
 {
@@ -16,6 +17,7 @@ namespace Cwcbb.Tools.CwcMontage
         private const string RUNTIME_ROOT_NAME = "[Global_Montage_ObjectPool]";
 
         private static Transform _runtimeRoot;
+        private static bool _isSceneEventSubscribed;
 
         private static readonly Dictionary<int, Stack<GameObject>> _runtimePrefabPools = new(32);
         private static readonly Dictionary<int, int> _instanceToPrefabMap = new(128);
@@ -42,6 +44,7 @@ namespace Cwcbb.Tools.CwcMontage
                     }
                     _runtimeRoot = go.transform;
                 }
+                EnsureSceneHook();
                 return _runtimeRoot;
             }
         }
@@ -240,6 +243,107 @@ namespace Cwcbb.Tools.CwcMontage
             }
 
             _audioSourcePool.Enqueue(src);
+        }
+
+        /// <summary>
+        /// 彻底清空对象池中的所有缓存对象与映射关系，并安全销毁池中所有暂存的 GameObject 与 AudioSource 实例。
+        /// 在场景卸载切换、返回主菜单或收到重大内存告警时自动或手动触发。
+        /// </summary>
+        public static void Clear()
+        {
+            // 1. 彻底销毁所有缓存的 Prefab 实例
+            foreach (var kvp in _runtimePrefabPools)
+            {
+                var stack = kvp.Value;
+                if (stack == null) continue;
+
+                while (stack.Count > 0)
+                {
+                    var go = stack.Pop();
+                    if (go != null)
+                    {
+                        UnityEngine.Object.Destroy(go);
+                    }
+                }
+            }
+            _runtimePrefabPools.Clear();
+            _instanceToPrefabMap.Clear();
+            _prefabInitialScaleMap.Clear();
+
+            // 2. 彻底销毁所有缓存的 AudioSource 通道实例
+            while (_audioSourcePool.Count > 0)
+            {
+                var src = _audioSourcePool.Dequeue();
+                if (src != null && src.gameObject != null)
+                {
+                    UnityEngine.Object.Destroy(src.gameObject);
+                }
+            }
+            _audioSourcePool.Clear();
+
+            // 3. 保底清理：若根节点下仍有残余挂载的未激活子节点，彻底安全销毁
+            if (_runtimeRoot != null)
+            {
+                int childCount = _runtimeRoot.childCount;
+                for (int i = childCount - 1; i >= 0; i--)
+                {
+                    var child = _runtimeRoot.GetChild(i);
+                    if (child != null && child.gameObject != null)
+                    {
+                        UnityEngine.Object.Destroy(child.gameObject);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 定向清理指定预制件在对象池中的所有缓存实例（为后续分级与白名单清理策略预留支持）。
+        /// </summary>
+        /// <param name="prefab">目标预制件</param>
+        public static void PurgePrefab(GameObject prefab)
+        {
+            if (prefab == null) return;
+
+            int prefabId = prefab.GetInstanceID();
+            if (_runtimePrefabPools.TryGetValue(prefabId, out var stack))
+            {
+                while (stack.Count > 0)
+                {
+                    var go = stack.Pop();
+                    if (go != null)
+                    {
+                        _instanceToPrefabMap.Remove(go.GetInstanceID());
+                        UnityEngine.Object.Destroy(go);
+                    }
+                }
+                _runtimePrefabPools.Remove(prefabId);
+            }
+            _prefabInitialScaleMap.Remove(prefabId);
+        }
+
+        #endregion
+
+        #region 私有方法 (场景事件监听与生命周期挂钩)
+
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void InitializeSceneEvents()
+        {
+            EnsureSceneHook();
+        }
+
+        private static void EnsureSceneHook()
+        {
+            if (!_isSceneEventSubscribed)
+            {
+                SceneManager.sceneUnloaded -= OnSceneUnloaded;
+                SceneManager.sceneUnloaded += OnSceneUnloaded;
+                _isSceneEventSubscribed = true;
+            }
+        }
+
+        private static void OnSceneUnloaded(Scene scene)
+        {
+            Clear();
         }
 
         #endregion

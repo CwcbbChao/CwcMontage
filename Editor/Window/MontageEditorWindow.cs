@@ -16,6 +16,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         #region 私有常量
 
         private const int OBJECT_PICKER_CONTROL_ID = 202699;
+        private const string USS_GUID = "1ac56d601272aa740b6f49bbcc195f4f";
 
         #endregion
 
@@ -63,6 +64,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             {
                 if (currentEvent.commandName == "ObjectSelectorUpdated" || currentEvent.commandName == "ObjectSelectorClosed")
                 {
+                    bool isClosed = currentEvent.commandName == "ObjectSelectorClosed";
                     if (EditorGUIUtility.GetObjectPickerControlID() == OBJECT_PICKER_CONTROL_ID)
                     {
                         var picked = EditorGUIUtility.GetObjectPickerObject() as MontageSequenceSO;
@@ -70,6 +72,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                         {
                             OpenTab(picked);
                         }
+                    }
+                    else if (EditorGUIUtility.GetObjectPickerControlID() == 202688)
+                    {
+                        var pickedClip = EditorGUIUtility.GetObjectPickerObject() as AnimationClip;
+                        _activeUI?.HandleAnimationPickerResult(pickedClip, isClosed);
                     }
                 }
             }
@@ -133,7 +140,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             root.AddToClassList("montage-editor-root");
             root.style.flexGrow = 1;
 
-            var styleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>("Assets/CwcPlugins/CwcMontage/Editor/Styles/MontageEditor.uss");
+            var styleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(AssetDatabase.GUIDToAssetPath(USS_GUID));
             if (styleSheet != null)
             {
                 root.styleSheets.Add(styleSheet);

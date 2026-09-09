@@ -36,6 +36,7 @@ namespace Cwcbb.Tools.CwcMontage
         private readonly MontageSequenceSO _sourceAsset;
         private readonly GameObject _targetObject;
         private readonly Animator _targetAnimator;
+        private readonly MontageCoordinator _coordinator;
         private readonly bool _isPreview;
 
         private readonly List<MontageActionBlockData> _runtimeBlocks = new(16);
@@ -210,7 +211,8 @@ namespace Cwcbb.Tools.CwcMontage
             Animator targetAnimator,
             float? customBlendInTime = null,
             AnimationCurve customBlendInCurve = null,
-            bool isPreview = false)
+            bool isPreview = false,
+            MontageCoordinator coordinator = null)
         {
             if (sourceAsset == null)
             {
@@ -222,6 +224,7 @@ namespace Cwcbb.Tools.CwcMontage
             _targetObject = targetObject;
             _targetAnimator = targetAnimator;
             _isPreview = isPreview;
+            _coordinator = coordinator;
 
             _state = MontagePlayerState.Playing;
             _isPaused = false;
@@ -408,6 +411,7 @@ namespace Cwcbb.Tools.CwcMontage
                 {
                     if (!_activeBlocks.Contains(blockData))
                     {
+                        action.BlockDuration = blockData.Duration;
                         if (action.CanEnter(context))
                         {
                             action.OnEnter(context);
@@ -416,6 +420,7 @@ namespace Cwcbb.Tools.CwcMontage
                     }
                     else
                     {
+                        action.BlockDuration = blockData.Duration;
                         action.OnUpdate(context, effectiveDelta);
                     }
                 }
@@ -428,6 +433,7 @@ namespace Cwcbb.Tools.CwcMontage
                 // 3. 穿透扫掠（单帧跨越整个块区间）：严格成对触发 OnEnter -> OnExit
                 else if (fromTime <= start && toTime >= end && fromTime < end)
                 {
+                    action.BlockDuration = blockData.Duration;
                     if (action.CanEnter(context))
                     {
                         action.OnEnter(context);
@@ -646,6 +652,25 @@ namespace Cwcbb.Tools.CwcMontage
         public void EvaluateSectionAtProgress(int sectionIndex, float progress) => EvaluateSectionProgress(sectionIndex, progress);
 
         /// <summary>
+        /// 评估当前权威时间戳下各动画片段在混音器中的采样时间与归一化混合权重（零 GC 分配）。
+        /// 严格支持相邻片段在时间轴上的交叉淡化（Crossfade）过渡。
+        /// </summary>
+        /// <param name="outIndices">输出活跃片段索引</param>
+        /// <param name="outSampleTimes">输出片段内部采样时间（秒）</param>
+        /// <param name="outWeights">输出归一化权重 [0.0, 1.0]</param>
+        public void EvaluateAnimationSegments(
+            List<int> outIndices,
+            List<float> outSampleTimes,
+            List<float> outWeights)
+        {
+            if (_sourceAsset == null) return;
+            float evalTime = _sourceAsset.IsLooping && TotalDuration > 0.0001f
+                ? (_elapsedTime % TotalDuration)
+                : _elapsedTime;
+            _sourceAsset.EvaluateAnimationSegments(evalTime, outIndices, outSampleTimes, outWeights);
+        }
+
+        /// <summary>
         /// 设置全局播放速率倍率。
         /// </summary>
         public void SetPlaybackRate(float rate)
@@ -803,7 +828,8 @@ namespace Cwcbb.Tools.CwcMontage
                 sectionProgress,
                 normProgress,
                 _playbackRate,
-                _isPreview);
+                _isPreview,
+                _coordinator);
         }
 
         #endregion

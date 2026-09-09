@@ -26,8 +26,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         private const string PREFS_PREVIEW_ROOT_MOTION_KEY = "CwcMontage_Preview_RootMotion";
         private const string PREFS_PREVIEW_FOOT_IK_KEY = "CwcMontage_Preview_FootIK";
         private const string PREVIEW_MODEL_PREFS_KEY = "CwcMontage_LastPreviewModelGuid";
-        private const string DEFAULT_PLUGIN_PREFAB_PATH = "Assets/CwcPlugins/CwcMontage/Editor/Models/Character/TestCharacter.prefab";
-        private const string DEFAULT_PLUGIN_FBX_PATH = "Assets/CwcPlugins/CwcMontage/Editor/Models/Character/X Bot.fbx";
+        private const string USS_GUID = "1ac56d601272aa740b6f49bbcc195f4f";
+        private const string DEFAULT_DUMMY_MODEL_GUID = "a0ee339482ca65344a511b7983d67fd8";
 
         #endregion
 
@@ -41,6 +41,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         private MontageActionInspectorElement _inspector;
         private MontageTimelineRuler _ruler;
         private MontageSectionTrackElement _sectionTrackElement;
+        private MontageAnimationTrackElement _animationTrackElement;
         private ScrollView _headersScrollView;
         private VisualElement _headersContentWrapper;
         private VisualElement _reorderIndicatorLine;
@@ -69,7 +70,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         // Playable & 动画状态
         private PlayableGraph _playableGraph;
-        private AnimationClipPlayable _clipPlayable;
+        private AnimationMixerPlayable _previewMixer;
+        private readonly List<AnimationClipPlayable> _previewSegmentPlayables = new();
+        private readonly List<int> _tempEvalIndices = new();
+        private readonly List<float> _tempEvalTimes = new();
+        private readonly List<float> _tempEvalWeights = new();
         private AnimationPlayableOutput _playableOutput;
         private Animator _previewAnimator;
         private GameObject _previewObject;
@@ -79,6 +84,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         private float _lastAnimationTime;
         private double _lastEditorTime;
         private float _clipLength = 1f;
+        private float _contentDuration = 0f;
         private float _frameRate = 30f;
         private int _totalFrames = 30;
 
@@ -87,6 +93,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private readonly List<MontageTrackElement> _trackElements = new();
         private MontageActionBlockElement _selectedBlock;
+        private MontageActionBlockData _selectedBlockData;
         private MontageTrackElement _selectedTrack;
 
         // 运行时预览动作块与上下文
@@ -118,12 +125,13 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _targetAsset = targetAsset;
             _serializedObject = serializedObject;
             _zoomLevel = EditorPrefs.GetFloat(PREFS_ZOOM_LEVEL_KEY, DEFAULT_ZOOM_LEVEL);
-            _zoomLevel = Mathf.Clamp(_zoomLevel, 0.1f, 15.0f);
+            _zoomLevel = Mathf.Clamp(_zoomLevel, 0.005f, 20.0f);
             _previewRootMotion = EditorPrefs.GetBool(PREFS_PREVIEW_ROOT_MOTION_KEY, false);
             _previewFootIK = EditorPrefs.GetBool(PREFS_PREVIEW_FOOT_IK_KEY, true);
 
             CollectActionTypes();
             BuildUIHierarchy();
+            MontageAudioPreviewUtility.EnsureInitialized();
             InitializePreviewAndPlayables();
             RebuildTracks();
 
@@ -139,10 +147,19 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public void RenderViewportImmediate() => _viewport?.RenderImmediate();
 
+        /// <summary>
+        /// 处理外部 ObjectPicker 选中的动画片段资源并添加到动画轨道。
+        /// </summary>
+        public void HandleAnimationPickerResult(AnimationClip picked, bool isClosed = false)
+        {
+            _animationTrackElement?.HandleObjectPickerResult(picked, isClosed);
+        }
+
         public void Dispose()
         {
             EditorApplication.update -= OnUpdateTick;
             CleanupPlayablesAndPreview();
+            MontageAudioPreviewUtility.StopAllClips();
             _root?.Unbind();
             _root?.Clear();
         }
@@ -157,7 +174,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _root.AddToClassList("montage-editor-root");
             _root.focusable = true;
 
-            var styleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>("Assets/CwcPlugins/CwcMontage/Editor/Styles/MontageEditor.uss");
+            var styleSheet = AssetDatabase.LoadAssetAtPath<StyleSheet>(AssetDatabase.GUIDToAssetPath(USS_GUID));
             if (styleSheet != null)
             {
                 _root.styleSheets.Add(styleSheet);
@@ -195,19 +212,35 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             // 侧边栏检查器
             _inspector = new MontageActionInspectorElement();
             _inspector.BindAsset(_targetAsset, _serializedObject);
-            _inspector.OnAnimationClipChanged += HandleAnimationClipChanged;
             _inspector.OnAssetSettingsModified += HandleGeneralAssetSettingsModified;
+            _inspector.OnAnimationSegmentClipChanged += () =>
+            {
+                UpdateTimelineLengthsAndSync(fullRebuild: true, markDirty: true, rebuildRuntimeBlocks: true);
+            };
             _inspector.OnDataModified += () =>
             {
                 _serializedObject.ApplyModifiedProperties();
                 EditorUtility.SetDirty(_targetAsset);
-                RebuildRuntimeActionBlocks();
 
-                // 仅在暂停/静止时立即求值与重绘，播放中则由下一帧 Update 自然更新，杜绝打断连续播放
+                // 1. 全局时间轴与所有轨道自适应联动（同步总时长、视口延展、标尺刻度、垂直网格与内容指示线）
+                UpdateTimelineLengthsAndSync(fullRebuild: false, markDirty: false, rebuildRuntimeBlocks: true);
+
+                // 2. 动画轨道即时重构条块几何与相邻交叉混合对角线
+                _targetAsset.SortAnimationSegments();
+                _animationTrackElement?.RebuildSegments();
+
+                // 3. 所有表现轨道条块外观与提示文本即时刷新（仅轻量更新外观，不销毁重建 DOM，保持选中状态）
+                for (int i = 0; i < _trackElements.Count; i++)
+                {
+                    _trackElements[i].UpdateBlocksVisual();
+                }
+
+                // 4. 物理分段轨道即时更新色块与分割线
+                _sectionTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+
+                // 5. 仅在暂停/静止时立即重绘视口，播放中则由下一帧 Update 自然推进
                 if (!_isPlaying)
                 {
-                    ExitAllActiveActionBlocks();
-                    EvaluateTimeAndPreviewLogic(0f);
                     _viewport?.RenderImmediate();
                 }
 
@@ -421,9 +454,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _headersScrollView.verticalScrollerVisibility = ScrollerVisibility.Hidden;
             _headersScrollView.horizontalScrollerVisibility = ScrollerVisibility.Hidden;
             _headersScrollView.RegisterCallback<WheelEvent>(OnHeadersAreaWheel, TrickleDown.TrickleDown);
+            _headersScrollView.RegisterCallback<MouseDownEvent>(OnBlankAreaMouseDown);
 
             _headersContentWrapper = new VisualElement();
             _headersContentWrapper.AddToClassList("montage-track-headers-content-wrapper");
+            _headersContentWrapper.RegisterCallback<MouseDownEvent>(OnBlankAreaMouseDown);
 
             _reorderIndicatorLine = new VisualElement();
             _reorderIndicatorLine.AddToClassList("montage-track-reorder-line");
@@ -468,11 +503,29 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _sectionTrackElement.OnSplitMoved += MoveSplitTimestamp;
             _sectionTrackElement.OnSplitRemoved += RemoveSplitTimestamp;
 
+            // 独立单条核心动画轨道组件
+            _animationTrackElement = new MontageAnimationTrackElement(
+                _targetAsset,
+                _clipLength,
+                _frameRate,
+                _zoomLevel
+            );
+            _animationTrackElement.OnSegmentSelected += (seg, idx) =>
+            {
+                _selectedBlock?.SetSelected(false);
+                _selectedBlock = null;
+                _selectedBlockData = null;
+                _inspector.InspectAnimationSegment(seg, idx, _targetAsset);
+            };
+            _animationTrackElement.OnDataModified += HandleAnimationTrackModified;
+            _animationTrackElement.OnRequestScrubTime += ScrubToTime;
+
             // 轨道内容区域
             _tracksScrollView = new ScrollView(ScrollViewMode.VerticalAndHorizontal);
             _tracksScrollView.AddToClassList("montage-tracks-scroll-view");
-            _tracksScrollView.RegisterCallback<MouseDownEvent>(OnTracksScrollViewMouseDown);
+            _tracksScrollView.RegisterCallback<MouseDownEvent>(OnBlankAreaMouseDown);
             _tracksScrollView.RegisterCallback<WheelEvent>(OnTimelineAreaWheel, TrickleDown.TrickleDown);
+            _tracksScrollView.RegisterCallback<GeometryChangedEvent>(OnTracksGeometryChanged);
 
             // 滚动联动绑定
             _tracksScrollView.verticalScroller.valueChanged += val =>
@@ -486,6 +539,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
             _tracksContentWrapper = new VisualElement();
             _tracksContentWrapper.AddToClassList("montage-tracks-content-wrapper");
+            _tracksContentWrapper.RegisterCallback<MouseDownEvent>(OnBlankAreaMouseDown);
             _tracksScrollView.Add(_tracksContentWrapper);
 
             rightTimelineColumn.Add(_tracksScrollView);
@@ -506,21 +560,25 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _currentPreviewPrefab = ResolvePreviewModel();
             _viewport.Initialize(_targetAsset, _currentPreviewPrefab, ref _previewObject);
 
-            if (_targetAsset == null || _targetAsset.AnimationClip == null)
+            _contentDuration = _targetAsset != null ? _targetAsset.TotalDuration : 0f;
+            var (initTotalWidth, initClipLength) = CalculateTimelineDimensions();
+            _clipLength = initClipLength;
+            _frameRate = _targetAsset != null ? Mathf.Max(1f, _targetAsset.FrameRate) : 30f;
+            _totalFrames = Mathf.Max(1, Mathf.RoundToInt(_contentDuration * _frameRate));
+
+            _ruler.SetTimelineData(_targetAsset, _animationTime, _clipLength, _frameRate, _zoomLevel);
+            _ruler.SetContentDuration(_contentDuration);
+            if (_tracksContentWrapper != null)
             {
-                _clipLength = 1f;
-                _frameRate = 30f;
-                _totalFrames = 30;
-                _ruler.SetTimelineData(_targetAsset, 0f, _clipLength, _frameRate, _zoomLevel);
+                _tracksContentWrapper.style.width = initTotalWidth;
+            }
+
+            if (_targetAsset == null || _targetAsset.AnimationSegments == null || _targetAsset.AnimationSegments.Count == 0)
+            {
+                RebuildRuntimeActionBlocks(forceRecreate: true);
                 _viewport.RenderImmediate();
                 return;
             }
-
-            _clipLength = Mathf.Max(0.001f, _targetAsset.AnimationClip.length);
-            _frameRate = Mathf.Max(1f, _targetAsset.AnimationClip.frameRate);
-            _totalFrames = Mathf.Max(1, Mathf.RoundToInt(_clipLength * _frameRate));
-
-            _ruler.SetTimelineData(_targetAsset, _animationTime, _clipLength, _frameRate, _zoomLevel);
 
             if (_previewObject != null)
             {
@@ -531,44 +589,198 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 _playableGraph = PlayableGraph.Create("CwcMontageEditorPreviewGraph");
                 _playableGraph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
 
-                _clipPlayable = AnimationClipPlayable.Create(_playableGraph, _targetAsset.AnimationClip);
-                _clipPlayable.SetApplyFootIK(_previewFootIK);
+                var segments = _targetAsset.AnimationSegments;
+                int segCount = segments.Count;
+
+                _previewMixer = AnimationMixerPlayable.Create(_playableGraph, segCount);
+                _previewSegmentPlayables.Clear();
+
+                for (int s = 0; s < segCount; s++)
+                {
+                    var seg = segments[s];
+                    var cp = seg?.Clip != null
+                        ? AnimationClipPlayable.Create(_playableGraph, seg.Clip)
+                        : default;
+
+                    if (cp.IsValid())
+                    {
+                        cp.SetApplyFootIK(_previewFootIK);
+                        cp.SetSpeed(1.0f);
+                        _previewMixer.ConnectInput(s, cp, 0);
+                    }
+
+                    _previewMixer.SetInputWeight(s, s == 0 ? 1.0f : 0.0f);
+                    _previewSegmentPlayables.Add(cp);
+                }
 
                 _playableOutput = AnimationPlayableOutput.Create(_playableGraph, "Animation", _previewAnimator);
-                _playableOutput.SetSourcePlayable(_clipPlayable);
+                _playableOutput.SetSourcePlayable(_previewMixer);
 
-                _clipPlayable.SetTime(_animationTime);
+                EvaluatePreviewPlayables();
                 _playableGraph.Evaluate();
             }
 
-            RebuildRuntimeActionBlocks();
+            RebuildRuntimeActionBlocks(forceRecreate: true);
             _viewport.RenderImmediate();
         }
 
-        private void HandleAnimationClipChanged()
+        private void EvaluatePreviewPlayables()
         {
-            bool wasPlaying = _isPlaying;
+            if (!_previewMixer.IsValid() || _previewSegmentPlayables.Count == 0 || _targetAsset == null) return;
 
+            _targetAsset.EvaluateAnimationSegments(_animationTime, _tempEvalIndices, _tempEvalTimes, _tempEvalWeights);
+
+            int total = _previewSegmentPlayables.Count;
+            for (int i = 0; i < total; i++)
+            {
+                _previewMixer.SetInputWeight(i, 0.0f);
+            }
+
+            for (int k = 0; k < _tempEvalIndices.Count; k++)
+            {
+                int segIdx = _tempEvalIndices[k];
+                if (segIdx >= 0 && segIdx < total)
+                {
+                    var cp = _previewSegmentPlayables[segIdx];
+                    if (cp.IsValid())
+                    {
+                        cp.SetTime(_tempEvalTimes[k]);
+                        cp.SetSpeed(1.0f);
+                    }
+                    _previewMixer.SetInputWeight(segIdx, _tempEvalWeights[k]);
+                }
+            }
+        }
+
+        private void HandleAnimationTrackModified()
+        {
+            bool structureChanged = false;
+            int assetSegCount = _targetAsset?.AnimationSegments != null ? _targetAsset.AnimationSegments.Count : 0;
+            if (_previewSegmentPlayables.Count != assetSegCount)
+            {
+                structureChanged = true;
+            }
+            else if (_targetAsset?.AnimationSegments != null)
+            {
+                for (int i = 0; i < assetSegCount; i++)
+                {
+                    var seg = _targetAsset.AnimationSegments[i];
+                    var cp = _previewSegmentPlayables[i];
+                    if (seg?.Clip == null && cp.IsValid())
+                    {
+                        structureChanged = true;
+                        break;
+                    }
+                    if (seg?.Clip != null && (!cp.IsValid() || cp.GetAnimationClip() != seg.Clip))
+                    {
+                        structureChanged = true;
+                        break;
+                    }
+                }
+            }
+
+            UpdateTimelineLengthsAndSync(fullRebuild: structureChanged);
+        }
+
+        private float GetViewportWidth()
+        {
+            float vpWidth = 1000f;
+            if (_tracksScrollView != null)
+            {
+                float w = _tracksScrollView.contentViewport?.resolvedStyle.width ?? 0f;
+                if (float.IsNaN(w) || w <= 0f)
+                {
+                    w = _tracksScrollView.resolvedStyle.width;
+                }
+                if (!float.IsNaN(w) && w > 0f)
+                {
+                    vpWidth = w;
+                }
+            }
+            return vpWidth;
+        }
+
+        private (float totalWidth, float clipLength) CalculateTimelineDimensions(float? predictedScrollX = null)
+        {
+            float pps = 200f * _zoomLevel;
+            float vpWidth = GetViewportWidth();
+            float currentScrollX = predictedScrollX ?? (_tracksScrollView != null ? _tracksScrollView.scrollOffset.x : 0f);
+
+            float contentPixels = _contentDuration * pps;
+            float marginPixels = Mathf.Max(150f, vpWidth * 0.15f);
+
+            // 画布总宽度核心计算公式：
+            // 1. 缩小全览时：保底填满当前屏幕视口宽度，消除右侧黑边与 450 帧截断，全屏无缝铺满网格与刻度，滚动条占满 100%；
+            // 2. 放大巡览时：严格基于有效内容长度 contentPixels + marginPixels，滚动条手柄占比精确反映实际动画有效长度；
+            // 3. 向右平移时：随视口向右滚动自适应延展，保证视野永不撞墙。
+            float totalWidth = Mathf.Max(vpWidth, Mathf.Max(contentPixels + marginPixels, currentScrollX + vpWidth));
+            float clipLength = totalWidth / pps;
+
+            return (totalWidth, Mathf.Max(clipLength, 1.0f));
+        }
+
+        /// <summary>
+        /// 全局统一更新时间轴时长、无限延展视界并联动同步所有轨道与标尺。
+        /// </summary>
+        private void UpdateTimelineLengthsAndSync(bool fullRebuild = false, bool markDirty = true, bool rebuildRuntimeBlocks = true, float? predictedScrollX = null)
+        {
             if (_serializedObject != null)
             {
                 _serializedObject.Update();
             }
 
-            EditorUtility.SetDirty(_targetAsset);
-            InitializePreviewAndPlayables();
-            RebuildTracks();
-            _sectionTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate);
-            UpdateToolbarTimeDisplay();
+            if (_targetAsset == null) return;
 
-            if (wasPlaying && _targetAsset?.AnimationClip != null)
+            float contentDuration = _targetAsset.TotalDuration;
+            _contentDuration = contentDuration;
+
+            var (totalWidth, clipLength) = CalculateTimelineDimensions(predictedScrollX);
+            _clipLength = clipLength;
+            _frameRate = Mathf.Max(1f, _targetAsset.FrameRate);
+            _totalFrames = Mathf.Max(1, Mathf.RoundToInt(_contentDuration * _frameRate));
+
+            _ruler?.SetTimelineData(_targetAsset, _animationTime, _clipLength, _frameRate, _zoomLevel);
+            _ruler?.SetContentDuration(_contentDuration);
+
+            _sectionTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+            _sectionTrackElement?.SetZoom(_zoomLevel);
+
+            _animationTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+            _animationTrackElement?.SetZoom(_zoomLevel);
+
+            for (int i = 0; i < _trackElements.Count; i++)
             {
-                _isPlaying = true;
-                _lastEditorTime = EditorApplication.timeSinceStartup;
-                UpdatePlayPauseVisual();
+                _trackElements[i].UpdateTimelineConfig(_clipLength, _frameRate, _contentDuration, _animationTime);
+                _trackElements[i].SetZoom(_zoomLevel);
             }
 
-            _viewport?.RenderImmediate();
-            OnAssetModified?.Invoke();
+            if (_tracksContentWrapper != null)
+            {
+                _tracksContentWrapper.style.width = totalWidth;
+            }
+
+            UpdateToolbarTimeDisplay();
+
+            if (fullRebuild)
+            {
+                InitializePreviewAndPlayables();
+            }
+            else if (rebuildRuntimeBlocks)
+            {
+                RebuildRuntimeActionBlocks();
+            }
+
+            if (!_isPlaying)
+            {
+                EvaluateTimeAndPreviewLogic(0f);
+                _viewport?.RenderImmediate();
+            }
+
+            if (markDirty)
+            {
+                EditorUtility.SetDirty(_targetAsset);
+                OnAssetModified?.Invoke();
+            }
         }
 
         private void HandleGeneralAssetSettingsModified()
@@ -580,6 +792,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
             EditorUtility.SetDirty(_targetAsset);
 
+            // 联动同步全局时间轴尺寸、视口延展与标尺刻度
+            UpdateTimelineLengthsAndSync(fullRebuild: false, markDirty: false, rebuildRuntimeBlocks: false);
+
             // 仅同步必要组件属性，绝不销毁 PlayableGraph、模型或中断播放
             if (_targetAsset != null)
             {
@@ -588,12 +803,16 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                     _previewAnimator.applyRootMotion = _previewRootMotion;
                 }
 
-                if (_clipPlayable.IsValid())
+                for (int i = 0; i < _previewSegmentPlayables.Count; i++)
                 {
-                    _clipPlayable.SetApplyFootIK(_previewFootIK);
+                    if (_previewSegmentPlayables[i].IsValid())
+                    {
+                        _previewSegmentPlayables[i].SetApplyFootIK(_previewFootIK);
+                    }
                 }
 
-                _sectionTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate);
+                _sectionTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+                _animationTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
             }
 
             if (!_isPlaying)
@@ -614,6 +833,15 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
             // 2. 从 EditorPrefs 全局记忆加载 (用户主动选择并持久化的模型)
             string savedGuid = EditorPrefs.GetString(PREVIEW_MODEL_PREFS_KEY, "");
+            // 若本地缓存仍为旧版模型，自动重置为最新的默认模型
+            if (savedGuid == "48d95c910780a8343ae08eee4cf18f1c" || 
+                savedGuid == "e05b8732575271b4aab0e4e700f2c05f" || 
+                savedGuid == "9b367696fbf6a204c8520223412179fb")
+            {
+                savedGuid = DEFAULT_DUMMY_MODEL_GUID;
+                EditorPrefs.SetString(PREVIEW_MODEL_PREFS_KEY, savedGuid);
+            }
+
             if (!string.IsNullOrEmpty(savedGuid))
             {
                 string path = AssetDatabase.GUIDToAssetPath(savedGuid);
@@ -627,21 +855,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 }
             }
 
-            // 3. 插件专属固定内置模型 (完全自包含，精准查找，无任何外部模糊搜索)
-            var defaultPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(DEFAULT_PLUGIN_PREFAB_PATH);
-            if (defaultPrefab != null)
-            {
-                return defaultPrefab;
-            }
-
-            var defaultFbx = AssetDatabase.LoadAssetAtPath<GameObject>(DEFAULT_PLUGIN_FBX_PATH);
-            if (defaultFbx != null)
-            {
-                return defaultFbx;
-            }
-
-            // 4. 若未配置且插件路径下无模型，直接返回 null，不进行任何全局搜索
-            return null;
+            // 3. 插件专属默认内置模型 (直接通过固定 GUID 加载)
+            return AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(DEFAULT_DUMMY_MODEL_GUID));
         }
 
         private void OnViewportModelChanged(GameObject newModel)
@@ -672,6 +887,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             ExitAllActiveActionBlocks();
             MontageAudioPreviewUtility.StopAllClips();
 
+            _previewSegmentPlayables.Clear();
+            if (_previewMixer.IsValid()) _previewMixer = default;
+
             if (_playableGraph.IsValid())
             {
                 _playableGraph.Destroy();
@@ -696,53 +914,96 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             // 1. 顶部挂载系统独立分段轨道 (Section Marker Track)
             if (_sectionTrackElement != null)
             {
-                _sectionTrackElement.SetTargetAsset(_targetAsset, _clipLength, _frameRate);
+                _sectionTrackElement.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
                 _headersContentWrapper?.Add(_sectionTrackElement.HeaderElement);
                 _tracksContentWrapper?.Add(_sectionTrackElement.ContentElement);
             }
 
-            if (_targetAsset?.Tracks == null || _targetAsset.Tracks.Count == 0)
+            // 2. 挂载核心单动画主干轨道 (Animation Track)
+            if (_animationTrackElement != null)
             {
-                ShowEmptyTracksGuide();
-                return;
+                _animationTrackElement.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+                _headersContentWrapper?.Add(_animationTrackElement.HeaderElement);
+                _tracksContentWrapper?.Add(_animationTrackElement.ContentElement);
             }
 
-            for (int i = 0; i < _targetAsset.Tracks.Count; i++)
+            if (_targetAsset?.Tracks != null)
             {
-                var trackData = _targetAsset.Tracks[i];
-                var trackElement = new MontageTrackElement(
-                    trackData,
-                    _targetAsset,
-                    i,
-                    _clipLength,
-                    _frameRate,
-                    _zoomLevel,
-                    _actionTypes,
-                    _actionTypeNames
-                );
-
-                trackElement.OnTrackSelected += SelectTrack;
-                trackElement.OnBlockSelected += SelectBlock;
-                trackElement.OnAddBlockAtTime += AddBlockToTrack;
-                trackElement.OnPasteBlockAtTime += PasteBlockToTrack;
-                trackElement.OnTrackPasteOverrideRequested += PasteTrackToTrack;
-                trackElement.OnInsertTrackBelowRequested += InsertTrackBelow;
-                trackElement.OnPasteNewTrackBelowRequested += PasteNewTrackBelow;
-                trackElement.OnDuplicateTrackRequested += DuplicateTrack;
-                trackElement.OnTrackDeleteRequested += DeleteTrack;
-                trackElement.OnTrackMoveRequested += MoveTrack;
-                trackElement.OnTrackHeaderDragging += HandleTrackHeaderDragging;
-                trackElement.OnTrackHeaderDropped += HandleTrackHeaderDropped;
-                trackElement.OnDataModified += () =>
+                for (int i = 0; i < _targetAsset.Tracks.Count; i++)
                 {
-                    RebuildRuntimeActionBlocks();
-                    EditorUtility.SetDirty(_targetAsset);
-                    OnAssetModified?.Invoke();
-                };
+                    var trackData = _targetAsset.Tracks[i];
+                    var trackElement = new MontageTrackElement(
+                        trackData,
+                        _targetAsset,
+                        i,
+                        _clipLength,
+                        _frameRate,
+                        _zoomLevel,
+                        _actionTypes,
+                        _actionTypeNames
+                    );
 
-                _trackElements.Add(trackElement);
-                _headersContentWrapper?.Add(trackElement.HeaderElement);
-                _tracksContentWrapper?.Add(trackElement.ContentElement);
+                    trackElement.OnTrackSelected += SelectTrack;
+                    trackElement.OnBlockSelected += SelectBlock;
+                    trackElement.OnBlockClicked += SelectBlock;
+                    trackElement.OnBlockMoving += block =>
+                    {
+                        if (_selectedBlock == block)
+                        {
+                            _inspector?.UpdateTimingDisplayDuringDrag(block);
+                        }
+                    };
+                    trackElement.OnBlockDraggingGlobalSync += HandleBlockDraggingGlobalSync;
+                    trackElement.OnAddBlockAtTime += AddBlockToTrack;
+                    trackElement.OnPasteBlockAtTime += PasteBlockToTrack;
+                    trackElement.OnTrackPasteOverrideRequested += PasteTrackToTrack;
+                    trackElement.OnInsertTrackBelowRequested += InsertTrackBelow;
+                    trackElement.OnPasteNewTrackBelowRequested += PasteNewTrackBelow;
+                    trackElement.OnDuplicateTrackRequested += DuplicateTrack;
+                    trackElement.OnTrackDeleteRequested += DeleteTrack;
+                    trackElement.OnTrackMoveRequested += MoveTrack;
+                    trackElement.OnTrackHeaderDragging += HandleTrackHeaderDragging;
+                    trackElement.OnTrackHeaderDropped += HandleTrackHeaderDropped;
+                    trackElement.OnDataModified += () =>
+                    {
+                        UpdateTimelineLengthsAndSync(fullRebuild: false);
+                        if (_selectedBlock != null)
+                        {
+                            _inspector?.InspectActionBlock(_selectedBlock);
+                        }
+                    };
+
+                    _trackElements.Add(trackElement);
+                    _headersContentWrapper?.Add(trackElement.HeaderElement);
+                    _tracksContentWrapper?.Add(trackElement.ContentElement);
+
+                    // 构造后如果有正在选中的块，恢复高亮
+                    if (_selectedBlockData != null)
+                    {
+                        trackElement.RebuildBlocks(_selectedBlockData);
+                    }
+                }
+            }
+
+            // 重新绑定 _selectedBlock 引用到新生成的 Element 实例
+            if (_selectedBlockData != null)
+            {
+                MontageActionBlockElement found = null;
+                for (int t = 0; t < _trackElements.Count; t++)
+                {
+                    var blocks = _trackElements[t].BlockElements;
+                    for (int b = 0; b < blocks.Count; b++)
+                    {
+                        if (blocks[b]?.Data == _selectedBlockData)
+                        {
+                            found = blocks[b];
+                            break;
+                        }
+                    }
+                    if (found != null) break;
+                }
+                _selectedBlock = found;
+                _selectedBlock?.SetSelected(true);
             }
 
             if (_reorderIndicatorLine != null)
@@ -753,51 +1014,51 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             RebuildRuntimeActionBlocks();
         }
 
-        private void ShowEmptyTracksGuide()
+        private void RebuildRuntimeActionBlocks(bool forceRecreate = false)
         {
-            var container = new VisualElement();
-            container.AddToClassList("montage-empty-tracks-container");
-
-            var card = new VisualElement();
-            card.AddToClassList("montage-empty-tracks-card");
-
-            var title = new Label("No Performance Tracks");
-            title.AddToClassList("montage-empty-tracks-title");
-            card.Add(title);
-
-            var desc = new Label("Click below to add a performance track for audio, VFX, camera shake or hitstop.");
-            desc.AddToClassList("montage-empty-tracks-desc");
-            card.Add(desc);
-
-            var btnGroup = new VisualElement();
-            btnGroup.AddToClassList("montage-empty-tracks-btn-group");
-
-            var addBtn = new Button(AddNewTrack) { text = "+ Add New Track" };
-            addBtn.AddToClassList("montage-toolbar-btn");
-            addBtn.AddToClassList("montage-primary-btn");
-            addBtn.AddToClassList("montage-empty-tracks-btn");
-            btnGroup.Add(addBtn);
-
-            if (MontageClipboard.HasCopiedTrack)
+            if (forceRecreate)
             {
-                var pasteBtn = new Button(PasteCopiedTrackAsNew) { text = "Paste Copied Track" };
-                pasteBtn.AddToClassList("montage-toolbar-btn");
-                pasteBtn.AddToClassList("montage-empty-tracks-btn");
-                btnGroup.Add(pasteBtn);
+                ExitAllActiveActionBlocks();
+                _runtimeActionBlocks.Clear();
+                if (_targetAsset?.Tracks == null) return;
+
+                float fps = _frameRate;
+                for (int i = 0; i < _targetAsset.Tracks.Count; i++)
+                {
+                    var track = _targetAsset.Tracks[i];
+                    if (track == null || track.IsMuted || track.ActionBlocks == null) continue;
+
+                    for (int j = 0; j < track.ActionBlocks.Count; j++)
+                    {
+                        var block = track.ActionBlocks[j];
+                        if (block != null && block.IsEnabled && block.Action != null)
+                        {
+                            var cloned = block.Clone();
+                            cloned.EnsureValid(fps);
+                            _runtimeActionBlocks.Add(cloned);
+                        }
+                    }
+                }
+                return;
             }
 
-            card.Add(btnGroup);
-            container.Add(card);
-            _tracksContentWrapper.Add(container);
+            SyncRuntimeActionBlocks();
         }
 
-        private void RebuildRuntimeActionBlocks()
+        private void SyncRuntimeActionBlocks()
         {
-            ExitAllActiveActionBlocks();
-            _runtimeActionBlocks.Clear();
-            if (_targetAsset?.Tracks == null) return;
+            if (_targetAsset?.Tracks == null)
+            {
+                ExitAllActiveActionBlocks();
+                _runtimeActionBlocks.Clear();
+                return;
+            }
 
+            var context = CreateCurrentContext();
             float fps = _frameRate;
+
+            // 1. 收集当前资产中所有有效源动作块
+            var validSourceBlocks = new List<MontageActionBlockData>();
             for (int i = 0; i < _targetAsset.Tracks.Count; i++)
             {
                 var track = _targetAsset.Tracks[i];
@@ -808,11 +1069,106 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                     var block = track.ActionBlocks[j];
                     if (block != null && block.IsEnabled && block.Action != null)
                     {
-                        var cloned = block.Clone();
-                        cloned.EnsureValid(fps);
-                        _runtimeActionBlocks.Add(cloned);
+                        validSourceBlocks.Add(block);
                     }
                 }
+            }
+
+            // 2. 清理已在资产中删除或已禁用的运行块
+            for (int i = _runtimeActionBlocks.Count - 1; i >= 0; i--)
+            {
+                var rb = _runtimeActionBlocks[i];
+                if (rb.SourceData == null || !validSourceBlocks.Contains(rb.SourceData))
+                {
+                    if (_activeActionBlocks.Contains(rb))
+                    {
+                        rb.Action?.OnPreviewExit(context);
+                        _activeActionBlocks.Remove(rb);
+                    }
+                    _runtimeActionBlocks.RemoveAt(i);
+                }
+            }
+
+            // 3. 对比并增量同步现存或新增的动作块
+            for (int i = 0; i < validSourceBlocks.Count; i++)
+            {
+                var src = validSourceBlocks[i];
+                var existingRb = _runtimeActionBlocks.Find(r => r.SourceData == src);
+
+                if (existingRb != null)
+                {
+                    // 同步起止时间与帧范围
+                    existingRb.StartFrame = src.StartFrame;
+                    existingRb.EndFrame = src.EndFrame;
+                    existingRb.StartTime = src.StartTime;
+                    existingRb.EndTime = src.EndTime;
+                    existingRb.EnsureValid(fps);
+
+                    bool needRecreate = existingRb.Action.RequiresPreviewRecreate(src.Action);
+
+                    if (needRecreate)
+                    {
+                        if (_activeActionBlocks.Contains(existingRb))
+                        {
+                            existingRb.Action?.OnPreviewExit(context);
+                            _activeActionBlocks.Remove(existingRb);
+                        }
+                        var cloned = src.Clone();
+                        cloned.EnsureValid(fps);
+                        int idx = _runtimeActionBlocks.IndexOf(existingRb);
+                        _runtimeActionBlocks[idx] = cloned;
+                    }
+                    else
+                    {
+                        // 原地覆盖序列化参数，保持非序列化预览字段（如现有实例）不受影响
+                        SyncActionParameters(src.Action, existingRb.Action);
+
+                        // 若正处于预览中，触发原地更新 Transform，杜绝销毁与闪烁
+                        if (_activeActionBlocks.Contains(existingRb))
+                        {
+                            existingRb.Action?.OnPreviewParametersChanged(context);
+                        }
+                    }
+                }
+                else
+                {
+                    var cloned = src.Clone();
+                    cloned.EnsureValid(fps);
+                    _runtimeActionBlocks.Add(cloned);
+                }
+            }
+        }
+
+        private void SyncActionParameters(MontageActionBlockBase source, MontageActionBlockBase target)
+        {
+            if (source == null || target == null || source.GetType() != target.GetType()) return;
+
+            try
+            {
+                CopySerializedFieldsReflectively(source, target);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[CwcMontage] 同步动作块参数异常: {ex.Message}");
+            }
+        }
+
+        private static void CopySerializedFieldsReflectively(MontageActionBlockBase source, MontageActionBlockBase target)
+        {
+            Type type = source.GetType();
+            while (type != null && type != typeof(object))
+            {
+                var fields = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly);
+                for (int i = 0; i < fields.Length; i++)
+                {
+                    var f = fields[i];
+                    if (f.IsInitOnly || Attribute.IsDefined(f, typeof(NonSerializedAttribute))) continue;
+                    if (f.IsPublic || Attribute.IsDefined(f, typeof(SerializeField)))
+                    {
+                        f.SetValue(target, f.GetValue(source));
+                    }
+                }
+                type = type.BaseType;
             }
         }
 
@@ -820,25 +1176,27 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         #region 缩放与平移控制
 
-        private void SetZoom(float newZoom)
+        private void OnTracksGeometryChanged(GeometryChangedEvent evt)
         {
-            _zoomLevel = Mathf.Clamp(newZoom, 0.1f, 15.0f);
+            if (Mathf.Abs(evt.newRect.width - evt.oldRect.width) > 1f)
+            {
+                UpdateTimelineLengthsAndSync(fullRebuild: false, markDirty: false, rebuildRuntimeBlocks: false);
+            }
+        }
+
+        private void SetZoom(float newZoom, float? targetScrollX = null)
+        {
+            _zoomLevel = Mathf.Clamp(newZoom, 0.005f, 20.0f);
             EditorPrefs.SetFloat(PREFS_ZOOM_LEVEL_KEY, _zoomLevel);
 
-            _ruler?.SetZoom(_zoomLevel);
-            _sectionTrackElement?.SetZoom(_zoomLevel);
-
-            for (int i = 0; i < _trackElements.Count; i++)
-            {
-                _trackElements[i].SetZoom(_zoomLevel);
-            }
+            UpdateTimelineLengthsAndSync(fullRebuild: false, markDirty: false, rebuildRuntimeBlocks: false, predictedScrollX: targetScrollX);
         }
 
         private void HandleWheelZoomDelta(float delta, Vector2? mousePos)
         {
             float zoomMultiplier = delta > 0 ? 1.15f : (1f / 1.15f);
             float oldZoom = _zoomLevel;
-            float newZoom = Mathf.Clamp(oldZoom * zoomMultiplier, 0.1f, 15f);
+            float newZoom = Mathf.Clamp(oldZoom * zoomMultiplier, 0.005f, 20f);
             if (Mathf.Approximately(oldZoom, newZoom)) return;
 
             SetZoom(newZoom);
@@ -870,7 +1228,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             {
                 float zoomMultiplier = evt.delta.y < 0 ? 1.15f : (1f / 1.15f);
                 float oldZoom = _zoomLevel;
-                float newZoom = Mathf.Clamp(oldZoom * zoomMultiplier, 0.1f, 15f);
+                float newZoom = Mathf.Clamp(oldZoom * zoomMultiplier, 0.005f, 20f);
 
                 if (!Mathf.Approximately(oldZoom, newZoom))
                 {
@@ -880,12 +1238,12 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                     Vector2 localMouse = _tracksContentWrapper.WorldToLocal(evt.mousePosition);
                     float mouseTime = Mathf.Max(0f, localMouse.x / (200f * oldZoom));
 
-                    SetZoom(newZoom);
-
                     // 调整水平滚动位移，保持鼠标所在的时间点在视口中不发生突变
                     float newMouseX = mouseTime * (200f * newZoom);
                     float viewportMouseX = evt.mousePosition.x - _tracksScrollView.worldBound.xMin;
                     float targetScrollX = Mathf.Max(0f, newMouseX - viewportMouseX);
+
+                    SetZoom(newZoom, targetScrollX);
 
                     if (_tracksScrollView != null)
                     {
@@ -902,9 +1260,16 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         {
             if (_tracksScrollView != null)
             {
-                _tracksScrollView.scrollOffset = new Vector2(
-                    Mathf.Max(0f, _tracksScrollView.scrollOffset.x - deltaX),
-                    _tracksScrollView.scrollOffset.y);
+                float targetX = Mathf.Max(0f, _tracksScrollView.scrollOffset.x - deltaX);
+                float vpWidth = GetViewportWidth();
+                float currentTotalWidth = _tracksContentWrapper != null ? _tracksContentWrapper.style.width.value.value : 0f;
+
+                if (targetX + vpWidth > currentTotalWidth)
+                {
+                    UpdateTimelineLengthsAndSync(fullRebuild: false, markDirty: false, rebuildRuntimeBlocks: false, predictedScrollX: targetX);
+                }
+
+                _tracksScrollView.scrollOffset = new Vector2(targetX, _tracksScrollView.scrollOffset.y);
             }
         }
 
@@ -914,28 +1279,29 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void OnUpdateTick()
         {
-            if (_targetAsset?.AnimationClip == null) return;
+            if (_targetAsset == null || (_targetAsset.TotalDuration <= 0f && _clipLength <= 0f)) return;
 
             double currentEditorTime = EditorApplication.timeSinceStartup;
             float deltaTime = Mathf.Min((float)(currentEditorTime - _lastEditorTime), 0.1f);
             _lastEditorTime = currentEditorTime;
 
-            if (_isPlaying && _clipLength > 0f)
+            float playDuration = _contentDuration > 0.001f ? _contentDuration : _clipLength;
+            if (_isPlaying && playDuration > 0f)
             {
                 float step = deltaTime * _previewSpeed;
                 _animationTime += step;
 
-                if (_animationTime >= _clipLength)
+                if (_animationTime >= playDuration)
                 {
                     if (_previewLoop)
                     {
-                        _animationTime %= _clipLength;
+                        _animationTime %= playDuration;
                         ExitAllActiveActionBlocks();
                         ResetPreviewModelTransform();
                     }
                     else
                     {
-                        _animationTime = _clipLength;
+                        _animationTime = playDuration;
                         _isPlaying = false;
                         UpdatePlayPauseVisual();
                     }
@@ -971,10 +1337,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void TogglePlayPause()
         {
+            float playDuration = _contentDuration > 0.001f ? _contentDuration : _clipLength;
             _isPlaying = !_isPlaying;
             if (_isPlaying)
             {
-                if (_animationTime >= _clipLength)
+                if (_animationTime >= playDuration)
                 {
                     _animationTime = 0f;
                     ResetPreviewModelTransform();
@@ -1032,9 +1399,13 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _previewFootIK = enabled;
             EditorPrefs.SetBool(PREFS_PREVIEW_FOOT_IK_KEY, enabled);
 
-            if (_clipPlayable.IsValid())
+            for (int i = 0; i < _previewSegmentPlayables.Count; i++)
             {
-                _clipPlayable.SetApplyFootIK(enabled);
+                var cp = _previewSegmentPlayables[i];
+                if (cp.IsValid())
+                {
+                    cp.SetApplyFootIK(enabled);
+                }
             }
 
             _viewport.RenderFrame();
@@ -1054,14 +1425,17 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void JumpToLastFrame()
         {
-            ScrubToTime(_clipLength);
+            ScrubToTime(_contentDuration > 0.001f ? _contentDuration : _clipLength);
         }
 
         private void EvaluateTimeAndPreviewLogic(float deltaTime)
         {
-            if (_clipPlayable.IsValid() && _playableGraph.IsValid())
+            if (_playableGraph.IsValid())
             {
-                _clipPlayable.SetTime(_animationTime);
+                if (_previewMixer.IsValid())
+                {
+                    EvaluatePreviewPlayables();
+                }
                 _playableGraph.Evaluate();
             }
 
@@ -1075,20 +1449,36 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
                 var action = blockData.Action;
                 bool isInside = _animationTime >= blockData.StartTime && _animationTime < blockData.EndTime;
+                float localTime = Mathf.Max(0f, _animationTime - blockData.StartTime);
 
                 if (isInside)
                 {
+                    action.BlockDuration = blockData.Duration;
                     if (!_activeActionBlocks.Contains(blockData))
                     {
                         if (action.CanPreviewEnter(context))
                         {
                             action.OnPreviewEnter(context);
                             _activeActionBlocks.Add(blockData);
+
+                            // 非播放状态下首次进入（如拖拽/跳转/单帧），立即精确还原到当前帧对应的粒子切片
+                            if (!_isPlaying)
+                            {
+                                action.OnPreviewScrub(context, localTime);
+                            }
                         }
                     }
                     else
                     {
-                        action.OnPreviewUpdate(context, deltaTime);
+                        if (_isPlaying)
+                        {
+                            action.OnPreviewUpdate(context, deltaTime);
+                        }
+                        else
+                        {
+                            // 暂停/拖动时间轴时，执行绝对时间切片采样
+                            action.OnPreviewScrub(context, localTime);
+                        }
                     }
                 }
                 else if (_activeActionBlocks.Contains(blockData))
@@ -1113,17 +1503,18 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private MontageActionContext CreateCurrentContext()
         {
+            float totalDuration = _contentDuration > 0.001f ? _contentDuration : _clipLength;
             int curSection = _targetAsset != null ? _targetAsset.GetSectionIndexAtTime(_animationTime) : 0;
-            var (start, end) = _targetAsset != null ? _targetAsset.GetSectionRange(curSection) : (start: 0f, end: _clipLength);
+            var (start, end) = _targetAsset != null ? _targetAsset.GetSectionRange(curSection) : (start: 0f, end: totalDuration);
             float sectionLen = Mathf.Max(0.0001f, end - start);
             float sectionProgress = Mathf.Clamp01((_animationTime - start) / sectionLen);
-            float normProgress = _clipLength > 0.0001f ? Mathf.Clamp01(_animationTime / _clipLength) : 0f;
+            float normProgress = totalDuration > 0.0001f ? Mathf.Clamp01(_animationTime / totalDuration) : 0f;
 
             return new MontageActionContext(
                 _previewObject,
                 _previewAnimator,
                 _animationTime,
-                _clipLength,
+                totalDuration,
                 curSection,
                 sectionProgress,
                 normProgress,
@@ -1160,14 +1551,16 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void UpdateToolbarTimeDisplay()
         {
+            float contentDuration = _contentDuration > 0.001f ? _contentDuration : (_targetAsset != null ? _targetAsset.TotalDuration : 0f);
             if (_timeValueLabel != null)
             {
-                _timeValueLabel.text = $"{_animationTime:F2}s / {_clipLength:F2}s";
+                _timeValueLabel.text = $"{_animationTime:F2}s / {contentDuration:F2}s";
             }
             if (_frameValueLabel != null)
             {
                 int curFrame = Mathf.FloorToInt(_animationTime * _frameRate);
-                _frameValueLabel.text = $"F {curFrame} / {_totalFrames}";
+                int totalFrames = Mathf.RoundToInt(contentDuration * _frameRate);
+                _frameValueLabel.text = $"F {curFrame} / {totalFrames}";
             }
             if (_sectionBadgeLabel != null && _targetAsset != null)
             {
@@ -1190,14 +1583,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             splits.Add(time);
             _targetAsset.SetSplitTimestamps(splits);
 
-            _sectionTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate);
-            for (int i = 0; i < _trackElements.Count; i++)
-            {
-                _trackElements[i].ContentElement.MarkDirtyRepaint();
-            }
-
-            EditorUtility.SetDirty(_targetAsset);
-            OnAssetModified?.Invoke();
+            UpdateTimelineLengthsAndSync(fullRebuild: false);
         }
 
         private void MoveSplitTimestamp(int splitIndex, float newTime)
@@ -1208,14 +1594,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             splits[splitIndex] = newTime;
             _targetAsset.SetSplitTimestamps(splits);
 
-            _sectionTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate);
-            for (int i = 0; i < _trackElements.Count; i++)
-            {
-                _trackElements[i].ContentElement.MarkDirtyRepaint();
-            }
-
-            EditorUtility.SetDirty(_targetAsset);
-            OnAssetModified?.Invoke();
+            UpdateTimelineLengthsAndSync(fullRebuild: false);
         }
 
         private void RemoveSplitTimestamp(int splitIndex)
@@ -1226,14 +1605,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             splits.RemoveAt(splitIndex);
             _targetAsset.SetSplitTimestamps(splits);
 
-            _sectionTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate);
-            for (int i = 0; i < _trackElements.Count; i++)
-            {
-                _trackElements[i].ContentElement.MarkDirtyRepaint();
-            }
-
-            EditorUtility.SetDirty(_targetAsset);
-            OnAssetModified?.Invoke();
+            UpdateTimelineLengthsAndSync(fullRebuild: false);
         }
 
         #endregion
@@ -1247,13 +1619,25 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _selectedTrack?.SetSelected(true);
         }
 
-        private void SelectBlock(MontageActionBlockElement block)
+        private void SelectBlockVisual(MontageActionBlockElement block)
         {
+            if (_selectedBlock == block && block != null && block.IsSelected) return;
+
             _selectedBlock?.SetSelected(false);
             _selectedBlock = block;
+            _selectedBlockData = block?.Data;
             _selectedBlock?.SetSelected(true);
+        }
 
-            _inspector.InspectActionBlock(block);
+        private void SelectBlock(MontageActionBlockElement block)
+        {
+            _animationTrackElement?.ClearSelection();
+            SelectBlockVisual(block);
+            if (block != null && block.TrackIndex >= 0 && block.TrackIndex < _trackElements.Count)
+            {
+                SelectTrack(_trackElements[block.TrackIndex]);
+            }
+            _inspector?.InspectActionBlock(block);
         }
 
         public void AddNewTrack()
@@ -1317,10 +1701,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             if (block?.Data == null || block.TrackIndex < 0 || block.TrackIndex >= _targetAsset.Tracks.Count) return;
 
             var cloned = block.Data.Clone();
-            int duration = cloned.EndFrame - cloned.StartFrame;
+            int duration = Mathf.Max(1, cloned.EndFrame - cloned.StartFrame);
             int newStart = block.Data.EndFrame;
-            int newEnd = Mathf.Min(newStart + duration, _totalFrames);
-            if (newEnd <= newStart) newEnd = newStart + 1;
+            int newEnd = newStart + duration;
 
             cloned.StartFrame = newStart;
             cloned.EndFrame = newEnd;
@@ -1328,16 +1711,14 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             cloned.EndTime = newEnd / _frameRate;
 
             _targetAsset.Tracks[block.TrackIndex].ActionBlocks.Add(cloned);
+            UpdateTimelineLengthsAndSync(fullRebuild: false);
             RebuildTracks();
-            EditorUtility.SetDirty(_targetAsset);
-            OnAssetModified?.Invoke();
         }
 
         private void AddBlockToTrack(MontageTrackElement track, Type actionType, float timeAtClick)
         {
-            int startFrame = Mathf.RoundToInt(timeAtClick * _frameRate);
-            int endFrame = Mathf.Min(startFrame + 5, _totalFrames);
-            if (endFrame <= startFrame) endFrame = startFrame + 1;
+            int startFrame = Mathf.Max(0, Mathf.RoundToInt(timeAtClick * _frameRate));
+            int endFrame = startFrame + 5;
 
             var newBlock = new MontageActionBlockData
             {
@@ -1349,10 +1730,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             };
 
             track.TrackData.ActionBlocks.Add(newBlock);
+            UpdateTimelineLengthsAndSync(fullRebuild: false);
             track.RebuildBlocks();
-            RebuildRuntimeActionBlocks();
-            EditorUtility.SetDirty(_targetAsset);
-            OnAssetModified?.Invoke();
         }
 
         private void PasteBlockToTrack(MontageTrackElement track, float timeAtClick)
@@ -1361,8 +1740,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             if (cloned == null || cloned.Action == null) return;
 
             int duration = Mathf.Max(1, cloned.EndFrame - cloned.StartFrame);
-            int startFrame = Mathf.RoundToInt(timeAtClick * _frameRate);
-            int endFrame = Mathf.Min(startFrame + duration, _totalFrames);
+            int startFrame = Mathf.Max(0, Mathf.RoundToInt(timeAtClick * _frameRate));
+            int endFrame = startFrame + duration;
 
             cloned.StartFrame = startFrame;
             cloned.EndFrame = endFrame;
@@ -1370,10 +1749,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             cloned.EndTime = endFrame / _frameRate;
 
             track.TrackData.ActionBlocks.Add(cloned);
+            UpdateTimelineLengthsAndSync(fullRebuild: false);
             track.RebuildBlocks();
-            RebuildRuntimeActionBlocks();
-            EditorUtility.SetDirty(_targetAsset);
-            OnAssetModified?.Invoke();
         }
 
         private void PasteTrackToTrack(MontageTrackElement track)
@@ -1382,9 +1759,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             if (clonedTrack == null) return;
 
             _targetAsset.Tracks[track.TrackIndex] = clonedTrack;
+            UpdateTimelineLengthsAndSync(fullRebuild: false);
             RebuildTracks();
-            EditorUtility.SetDirty(_targetAsset);
-            OnAssetModified?.Invoke();
         }
 
         private void DeleteTrack(MontageTrackElement track)
@@ -1393,9 +1769,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             {
                 _targetAsset.Tracks.RemoveAt(track.TrackIndex);
                 _inspector.ClearActionInspect();
+                UpdateTimelineLengthsAndSync(fullRebuild: false);
                 RebuildTracks();
-                EditorUtility.SetDirty(_targetAsset);
-                OnAssetModified?.Invoke();
             }
         }
 
@@ -1464,56 +1839,49 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             }
         }
 
+        private void HandleBlockDraggingGlobalSync(MontageActionBlockElement block, float activeEdgeTime)
+        {
+            if (block?.Data == null || _targetAsset == null) return;
+
+            // 1. 所见即所得逐帧求值：将播放头与视口实时定位到当前拖拽边缘的时间点
+            if (!_isPlaying && activeEdgeTime >= 0f)
+            {
+                _animationTime = Mathf.Clamp(activeEdgeTime, 0f, Mathf.Max(_clipLength, _targetAsset.TotalDuration));
+                _lastAnimationTime = _animationTime;
+            }
+
+            // 2. 全局统一更新时间轴、标尺、视界延展、运行时动作块增量同步与 3D 视口实时求值渲染
+            UpdateTimelineLengthsAndSync(fullRebuild: false, markDirty: false, rebuildRuntimeBlocks: true);
+
+            // 3. 属性面板 60 FPS 无锁数字更新（轻量快速路径）
+            if (_selectedBlock == block)
+            {
+                _inspector?.UpdateTimingDisplayDuringDrag(block);
+            }
+        }
+
         private void ShowAddTrackDropdownMenu()
         {
             var menu = new GenericMenu();
-            menu.AddItem(new GUIContent("Add Empty Track"), false, AddNewTrack);
+            menu.AddItem(new GUIContent("Add New Track"), false, AddNewTrack);
 
             if (MontageClipboard.HasCopiedTrack)
             {
-                menu.AddItem(new GUIContent("Paste Copied Track as New"), false, PasteCopiedTrackAsNew);
+                menu.AddItem(new GUIContent("Paste as New Track"), false, PasteCopiedTrackAsNew);
             }
             else
             {
-                menu.AddDisabledItem(new GUIContent("Paste Copied Track as New"));
+                menu.AddDisabledItem(new GUIContent("Paste as New Track"));
             }
 
             menu.ShowAsContext();
         }
 
-        private void OnTracksScrollViewMouseDown(MouseDownEvent evt)
+        private void OnBlankAreaMouseDown(MouseDownEvent evt)
         {
             if (evt.button == 1)
             {
-                var menu = new GenericMenu();
-                menu.AddItem(new GUIContent("Add New Track"), false, AddNewTrack);
-
-                if (MontageClipboard.HasCopiedTrack)
-                {
-                    menu.AddItem(new GUIContent("Paste as New Track"), false, PasteCopiedTrackAsNew);
-                }
-                else
-                {
-                    menu.AddDisabledItem(new GUIContent("Paste as New Track"));
-                }
-
-                if (_targetAsset.Tracks.Count > 0)
-                {
-                    menu.AddSeparator("");
-                    menu.AddItem(new GUIContent("Clear All Tracks"), false, () =>
-                    {
-                        if (EditorUtility.DisplayDialog("Clear All Tracks", "Are you sure you want to remove all tracks?", "Yes", "Cancel"))
-                        {
-                            _targetAsset.Tracks.Clear();
-                            _inspector.ClearActionInspect();
-                            RebuildTracks();
-                            EditorUtility.SetDirty(_targetAsset);
-                            OnAssetModified?.Invoke();
-                        }
-                    });
-                }
-
-                menu.DropDown(new Rect(evt.mousePosition, Vector2.zero));
+                ShowAddTrackDropdownMenu();
                 evt.StopPropagation();
             }
         }

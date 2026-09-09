@@ -24,6 +24,7 @@ namespace Cwcbb.Tools.CwcMontage
         #region 私有字段
 
         [NonSerialized] private bool _isActive;
+        [NonSerialized] private float _blockDuration = 1.0f;
 
         #endregion
 
@@ -48,6 +49,64 @@ namespace Cwcbb.Tools.CwcMontage
         /// 当前动作块是否处于活跃执行状态。
         /// </summary>
         public bool IsActive => _isActive;
+
+        /// <summary>
+        /// 当前动作块在时间轴上的持续时长（秒）。由包含它的 MontageActionBlockData 或调度系统注入。
+        /// </summary>
+        public float BlockDuration
+        {
+            get => _blockDuration;
+            set => _blockDuration = Mathf.Max(0.0001f, value);
+        }
+
+        /// <summary>
+        /// 该动作块是否支持媒体片段截取（Trimming）与随 Block 缩放（Time-Stretching）。
+        /// 默认为 false。媒体型动作块（如 VFX、Audio、Video 等）可重写返回 true。
+        /// </summary>
+        public virtual bool IsTrimmableClip => false;
+
+        /// <summary>
+        /// 媒体片段截取的起始时间（秒）。
+        /// </summary>
+        public virtual float ClipStartTime
+        {
+            get => 0f;
+            set { }
+        }
+
+        /// <summary>
+        /// 媒体片段截取的结束时间（秒）。
+        /// </summary>
+        public virtual float ClipEndTime
+        {
+            get => BlockDuration;
+            set { }
+        }
+
+        /// <summary>
+        /// 媒体截取的有效片段时长（秒）。即 ClipEndTime - ClipStartTime。
+        /// </summary>
+        public virtual float EffectiveClipDuration => Mathf.Max(0.001f, ClipEndTime - ClipStartTime);
+
+        /// <summary>
+        /// 随 Block 长度自适应拉伸后的播放速度倍率。
+        /// 当 Block 长度等于有效截取时长时为 1.0x 原速；
+        /// 当 Block 缩短为一半时为 2.0x 加速；当 Block 拉长为两倍时为 0.5x 减速。
+        /// </summary>
+        public virtual float SpeedMultiplier => EffectiveClipDuration / Mathf.Max(0.001f, BlockDuration);
+
+        #endregion
+
+        #region 公共方法 (剪辑与时长适配)
+
+        /// <summary>
+        /// 将截取区间自适应匹配为目标时长（如当前 Block 时长）。
+        /// </summary>
+        /// <param name="targetDuration">目标时长（秒）</param>
+        public virtual void FitClipToDuration(float targetDuration)
+        {
+            ClipEndTime = ClipStartTime + Mathf.Max(0.001f, targetDuration);
+        }
 
         #endregion
 
@@ -127,6 +186,42 @@ namespace Cwcbb.Tools.CwcMontage
         /// <param name="context">当前动画帧执行上下文</param>
         public virtual void OnPreviewExit(in MontageActionContext context)
         {
+        }
+
+        /// <summary>
+        /// 在编辑器非播放状态下拖拽时间轴（Scrubbing）或单帧跳转时触发，将视口预览状态精准对齐到当前动作块局部时间（秒）。
+        /// </summary>
+        /// <param name="context">当前动画帧执行上下文</param>
+        /// <param name="localTime">当前时间相对于该动作块开始时间的局部秒数</param>
+        public virtual void OnPreviewScrub(in MontageActionContext context, float localTime)
+        {
+        }
+
+        /// <summary>
+        /// 当该动作块在 Inspector 中的参数发生修改时触发，允许当前已实例化的预览对象原地更新（如同步 Transform），避免销毁重建。
+        /// </summary>
+        /// <param name="context">当前动画帧执行上下文</param>
+        public virtual void OnPreviewParametersChanged(in MontageActionContext context)
+        {
+        }
+
+        /// <summary>
+        /// 当在编辑器中外部修改了动作块参数时，由动作块自身多态判断是否需要强制销毁重建视口预览实例（例如更换了核心资源资产）。
+        /// 默认返回 false（即支持原地平滑更新）；派生类若更换了核心资源引用可重写返回 true。
+        /// </summary>
+        /// <param name="newBlock">包含最新参数的动作块源数据</param>
+        /// <returns>若返回 true 则主体框架将调用 OnPreviewExit 销毁旧实例并重新实例化，否则原地更新</returns>
+        public virtual bool RequiresPreviewRecreate(MontageActionBlockBase newBlock)
+        {
+            return false;
+        }
+
+        /// <summary>
+        /// 动作块向 Inspector Timing 面板提供的附加描述信息（如特效自然时长、自适应缩放倍率等）。默认返回 null。
+        /// </summary>
+        public virtual string GetTimingCustomHint()
+        {
+            return null;
         }
 
         #endregion

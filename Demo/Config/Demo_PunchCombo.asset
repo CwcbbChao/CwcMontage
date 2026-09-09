@@ -1,0 +1,135 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e2a3c0759d53a0e4f9951403c23edb75, type: 3}
+  m_Name: Demo_PunchCombo
+  m_EditorClassIdentifier: 
+  _animationSegments:
+  - _clip: {fileID: 1705686167135224321, guid: a0ee339482ca65344a511b7983d67fd8, type: 3}
+    _startTime: 0
+    _startOffset: 0
+    _endOffset: 0
+    _duration: 1
+    _blendCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+  _animationLayer: 0
+  _basePlayRate: 1
+  _isLooping: 0
+  _isFootIK: 0
+  _defaultBlendInTime: 0.15
+  _blendInCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 1
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 1
+      inSlope: 1
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  _defaultBlendOutTime: 0.15
+  _blendOutCurve:
+    serializedVersion: 2
+    m_Curve:
+    - serializedVersion: 3
+      time: 0
+      value: 0
+      inSlope: 0
+      outSlope: 1
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    - serializedVersion: 3
+      time: 1
+      value: 1
+      inSlope: 1
+      outSlope: 0
+      tangentMode: 0
+      weightedMode: 0
+      inWeight: 0
+      outWeight: 0
+    m_PreInfinity: 2
+    m_PostInfinity: 2
+    m_RotationOrder: 4
+  _blendOutOffset: 0
+  _applyHorizontalRootMotion: 0
+  _applyVerticalRootMotion: 0
+  _applyRotationRootMotion: 0
+  _splitTimestamps:
+  - 0.26666668
+  - 0.53333336
+  _tracks:
+  - _trackName: Track 1
+    _isMuted: 0
+    _isLocked: 0
+    _actionBlocks:
+    - _startTime: 0.26666668
+      _endTime: 0.76666665
+      _startFrame: 8
+      _endFrame: 23
+      _action:
+        rid: 5062639917469795183
+  references:
+    version: 2
+    RefIds:
+    - rid: 5062639917469795183
+      type: {class: VFXActionBlock, ns: Cwcbb.Tools.CwcMontage, asm: Cwcbb.Tools.CwcMontage.Runtime}
+      data:
+        _customName: 
+        _isEnabled: 1
+        _targetBone: 0
+        _attachMode: 0
+        _positionOffset: {x: 0, y: 1.37, z: 1}
+        _rotationOffset: {x: 0, y: 0, z: 0}
+        _scale: {x: 1, y: 1, z: 1}
+        _vfxPrefab: {fileID: 4500418477058885171, guid: 30c6c747e88b174409061ceb622adfa3,
+          type: 3}
+        _stopBehavior: 0
+        _playbackRateSynced: 1
+        _clipStartTime: 0
+        _clipEndTime: 0.5

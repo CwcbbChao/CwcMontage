@@ -6,7 +6,7 @@ namespace Cwcbb.Tools.CwcMontage
 {
     /// <summary>
     /// 蒙太奇核心数据资产（ScriptableObject）。
-    /// 基于单一 AnimationClip 配置动画播放属性、淡入淡出曲线、Root Motion 开关、去语义化物理分段与多轨道表现块。
+    /// 基于多片段动画轨道（MontageAnimationSegment）配置动画播放属性、淡入淡出曲线、Root Motion 开关、去语义化物理分段与多轨道表现块。
     /// </summary>
     [CreateAssetMenu(fileName = "Montage_", menuName = "Cwc/Montage/Montage Sequence")]
     public class MontageSequenceSO : ScriptableObject
@@ -14,8 +14,8 @@ namespace Cwcbb.Tools.CwcMontage
         #region Inspector 字段
 
         [Header("Animation Base")]
-        [Tooltip("核心动画片段。整个蒙太奇的时间轴长度与基准帧率由该片段决定。")]
-        [SerializeField] private AnimationClip _animationClip;
+        [Tooltip("单条动画轨道上的所有动画片段列表（支持多动画拼接、独立调速与交叉混合）。")]
+        [SerializeField] private List<MontageAnimationSegment> _animationSegments = new();
 
         [Tooltip("默认播放图层索引（0 为基础层，1+ 为叠加/覆盖动作层）。")]
         [Min(0)]
@@ -72,12 +72,29 @@ namespace Cwcbb.Tools.CwcMontage
         #region 公共属性
 
         /// <summary>
-        /// 核心动画片段。
+        /// 单条动画轨道上的所有动画片段列表。
+        /// </summary>
+        public List<MontageAnimationSegment> AnimationSegments => _animationSegments;
+
+        /// <summary>
+        /// 核心首个动画片段（只读便捷属性，指向第一个有效 Segment 的 Clip）。
         /// </summary>
         public AnimationClip AnimationClip
         {
-            get => _animationClip;
-            set => _animationClip = value;
+            get
+            {
+                if (_animationSegments != null)
+                {
+                    for (int i = 0; i < _animationSegments.Count; i++)
+                    {
+                        if (_animationSegments[i]?.Clip != null)
+                        {
+                            return _animationSegments[i].Clip;
+                        }
+                    }
+                }
+                return null;
+            }
         }
 
         /// <summary>
@@ -157,9 +174,60 @@ namespace Cwcbb.Tools.CwcMontage
         public bool ApplyRotationRootMotion => _applyRotationRootMotion;
 
         /// <summary>
-        /// 动画总时长（秒）。
+        /// 动画总时长（秒，取所有动画片段、表现轨道动作块与切分点的最大结束时间）。
         /// </summary>
-        public float TotalDuration => _animationClip != null ? _animationClip.length : 0.0f;
+        public float TotalDuration
+        {
+            get
+            {
+                float maxEndTime = 0.0f;
+
+                // 1. 核心动画轨道上的动画片段
+                if (_animationSegments != null)
+                {
+                    for (int i = 0; i < _animationSegments.Count; i++)
+                    {
+                        var seg = _animationSegments[i];
+                        if (seg != null && seg.EndTime > maxEndTime)
+                        {
+                            maxEndTime = seg.EndTime;
+                        }
+                    }
+                }
+
+                // 2. 表现轨道上的动作块
+                if (_tracks != null)
+                {
+                    for (int i = 0; i < _tracks.Count; i++)
+                    {
+                        var track = _tracks[i];
+                        if (track?.ActionBlocks == null) continue;
+                        for (int j = 0; j < track.ActionBlocks.Count; j++)
+                        {
+                            var block = track.ActionBlocks[j];
+                            if (block != null && block.EndTime > maxEndTime)
+                            {
+                                maxEndTime = block.EndTime;
+                            }
+                        }
+                    }
+                }
+
+                // 3. 物理分段切分点
+                if (_splitTimestamps != null)
+                {
+                    for (int i = 0; i < _splitTimestamps.Count; i++)
+                    {
+                        if (_splitTimestamps[i] > maxEndTime)
+                        {
+                            maxEndTime = _splitTimestamps[i];
+                        }
+                    }
+                }
+
+                return maxEndTime;
+            }
+        }
 
         /// <summary>
         /// 蒙太奇单次播放的权威自然终点时间戳（秒，考虑推迟淡出 BlendOutOffset）。
@@ -167,9 +235,27 @@ namespace Cwcbb.Tools.CwcMontage
         public float NaturalEndTime => TotalDuration + Mathf.Max(0.0f, _blendOutOffset);
 
         /// <summary>
-        /// 动画基准帧率。
+        /// 动画基准帧率（优先读取首个有效片段的采样帧率）。
         /// </summary>
-        public float FrameRate => _animationClip != null ? _animationClip.frameRate : 30.0f;
+        public float FrameRate
+        {
+            get
+            {
+                if (_animationSegments != null)
+                {
+                    for (int i = 0; i < _animationSegments.Count; i++)
+                    {
+                        var clip = _animationSegments[i]?.Clip;
+                        if (clip != null && clip.frameRate > 0.01f)
+                        {
+                            return clip.frameRate;
+                        }
+                    }
+                }
+
+                return 30.0f;
+            }
+        }
 
         /// <summary>
         /// 动画总帧数。
@@ -197,6 +283,7 @@ namespace Cwcbb.Tools.CwcMontage
 
         private void OnValidate()
         {
+            EnsureSegmentsValid();
             ValidateActionBlocks();
         }
 
@@ -314,16 +401,204 @@ namespace Cwcbb.Tools.CwcMontage
             _splitTimestamps.Clear();
             if (timestamps == null) return;
 
-            float total = TotalDuration;
             foreach (var t in timestamps)
             {
-                if (t > 0.0001f && t < total - 0.0001f)
+                if (t > 0.0001f)
                 {
                     _splitTimestamps.Add(t);
                 }
             }
 
             _splitTimestamps.Sort();
+        }
+
+        /// <summary>
+        /// 校验并对动画轨道上的片段列表按时间戳升序排序。
+        /// </summary>
+        public void SortAnimationSegments()
+        {
+            if (_animationSegments == null || _animationSegments.Count <= 1) return;
+            _animationSegments.Sort((a, b) => a.StartTime.CompareTo(b.StartTime));
+        }
+
+        /// <summary>
+        /// 校验所有动画片段的起止时间与时长合法性。
+        /// </summary>
+        public void EnsureSegmentsValid()
+        {
+            if (_animationSegments == null) return;
+
+            for (int i = 0; i < _animationSegments.Count; i++)
+            {
+                _animationSegments[i]?.EnsureValid();
+            }
+        }
+
+        /// <summary>
+        /// 评估指定蒙太奇绝对时间戳下所有活跃片段的索引、内部采样时间与归一化混合权重。
+        /// 支持相邻片段交叉过渡（Crossfade）的精确平滑插值。零 GC 内存分配。
+        /// </summary>
+        /// <param name="timelineTime">蒙太奇绝对时间戳（秒）</param>
+        /// <param name="outIndices">输出活跃片段在列表中的索引</param>
+        /// <param name="outSampleTimes">输出对应片段内部的采样时间戳（秒）</param>
+        /// <param name="outWeights">输出对应片段的归一化混合权重 [0.0, 1.0]</param>
+        public void EvaluateAnimationSegments(
+            float timelineTime,
+            List<int> outIndices,
+            List<float> outSampleTimes,
+            List<float> outWeights)
+        {
+            if (outIndices == null || outSampleTimes == null || outWeights == null) return;
+            outIndices.Clear();
+            outSampleTimes.Clear();
+            outWeights.Clear();
+
+            int count = _animationSegments != null ? _animationSegments.Count : 0;
+            if (count == 0)
+            {
+                return;
+            }
+
+            // 单个片段快速路径
+            if (count == 1)
+            {
+                var single = _animationSegments[0];
+                if (single?.Clip != null)
+                {
+                    outIndices.Add(0);
+                    outSampleTimes.Add(single.EvaluateLocalSampleTime(timelineTime));
+                    outWeights.Add(1.0f);
+                }
+                return;
+            }
+
+            // 多片段重叠与交叉混音计算
+            float t = Mathf.Max(0.0f, timelineTime);
+
+            // 1. 查找所有时间覆盖当前时间点 t 的片段
+            for (int i = 0; i < count; i++)
+            {
+                var seg = _animationSegments[i];
+                if (seg?.Clip == null) continue;
+
+                float start = seg.StartTime;
+                float end = seg.EndTime;
+
+                // 容差判定：处于片段区间内，或到达最后一个片段末端
+                bool isInside = (t >= start && t < end) || (i == count - 1 && t >= end && Mathf.Abs(t - end) < 0.001f);
+                if (isInside)
+                {
+                    outIndices.Add(i);
+                }
+            }
+
+            // 2. 若当前落在两段片段之间的间隙或头部/尾部外
+            if (outIndices.Count == 0)
+            {
+                // 落在第一个有效片段之前：保持首个片段的第 0 帧起首姿态
+                if (t < _animationSegments[0].StartTime)
+                {
+                    outIndices.Add(0);
+                    outSampleTimes.Add(_animationSegments[0].EvaluateLocalSampleTime(_animationSegments[0].StartTime));
+                    outWeights.Add(1.0f);
+                    return;
+                }
+
+                // 落在最后一个片段之后：保持末尾片段的末尾帧姿态
+                int lastIdx = count - 1;
+                if (t >= _animationSegments[lastIdx].EndTime)
+                {
+                    outIndices.Add(lastIdx);
+                    outSampleTimes.Add(_animationSegments[lastIdx].EvaluateLocalSampleTime(_animationSegments[lastIdx].EndTime));
+                    outWeights.Add(1.0f);
+                    return;
+                }
+
+                // 落在两段动画之间的真空期（Gap）：
+                // 严格停留在紧邻的前一片段的末尾帧姿态（Hold Last Frame），绝不跳变至后一片段首帧
+                int preIdx = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    if (_animationSegments[i].EndTime <= t)
+                    {
+                        preIdx = i;
+                    }
+                    else
+                    {
+                        break;
+                    }
+                }
+
+                var preSeg = _animationSegments[preIdx];
+                outIndices.Add(preIdx);
+                outSampleTimes.Add(preSeg.EvaluateLocalSampleTime(preSeg.EndTime));
+                outWeights.Add(1.0f);
+                return;
+            }
+
+            // 3. 只有一个活跃片段（无重叠）
+            if (outIndices.Count == 1)
+            {
+                int idx = outIndices[0];
+                var seg = _animationSegments[idx];
+                outSampleTimes.Add(seg.EvaluateLocalSampleTime(t));
+                outWeights.Add(1.0f);
+                return;
+            }
+
+            // 4. 有两个相邻片段发生交叉重叠（Crossfade）
+            if (outIndices.Count == 2)
+            {
+                int idxA = outIndices[0];
+                int idxB = outIndices[1];
+                var segA = _animationSegments[idxA];
+                var segB = _animationSegments[idxB];
+
+                // 严格保证 prevSeg 为起点较早者，nextSeg 为起点较晚者
+                int prevIdx = segA.StartTime <= segB.StartTime ? idxA : idxB;
+                int nextIdx = segA.StartTime <= segB.StartTime ? idxB : idxA;
+                var prevSeg = _animationSegments[prevIdx];
+                var nextSeg = _animationSegments[nextIdx];
+
+                float overlapStart = nextSeg.StartTime;
+                float overlapEnd = Mathf.Min(prevSeg.EndTime, nextSeg.EndTime);
+                float overlapDuration = Mathf.Max(0.0001f, overlapEnd - overlapStart);
+
+                float progress = Mathf.Clamp01((t - overlapStart) / overlapDuration);
+                float nextWeight = nextSeg.BlendCurve != null ? Mathf.Clamp01(nextSeg.BlendCurve.Evaluate(progress)) : progress;
+                float prevWeight = Mathf.Clamp01(1.0f - nextWeight);
+
+                float totalW = prevWeight + nextWeight;
+                if (totalW > 0.0001f)
+                {
+                    prevWeight /= totalW;
+                    nextWeight /= totalW;
+                }
+                else
+                {
+                    prevWeight = 0.5f;
+                    nextWeight = 0.5f;
+                }
+
+                outIndices[0] = prevIdx;
+                outIndices[1] = nextIdx;
+
+                outSampleTimes.Add(prevSeg.EvaluateLocalSampleTime(t));
+                outWeights.Add(prevWeight);
+
+                outSampleTimes.Add(nextSeg.EvaluateLocalSampleTime(t));
+                outWeights.Add(nextWeight);
+                return;
+            }
+
+            // 5. 极罕见的 3 个以上片段重叠保底：平分权重
+            float uniformWeight = 1.0f / outIndices.Count;
+            for (int k = 0; k < outIndices.Count; k++)
+            {
+                var seg = _animationSegments[outIndices[k]];
+                outSampleTimes.Add(seg.EvaluateLocalSampleTime(t));
+                outWeights.Add(uniformWeight);
+            }
         }
 
         #endregion

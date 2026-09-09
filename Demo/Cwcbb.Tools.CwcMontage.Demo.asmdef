@@ -1,0 +1,16 @@
+{
+    "name": "Cwcbb.Tools.CwcMontage.Demo",
+    "rootNamespace": "Cwcbb.Tools.CwcMontage.Demo",
+    "references": [
+        "Cwcbb.Tools.CwcMontage.Runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

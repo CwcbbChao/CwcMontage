@@ -658,6 +658,13 @@
     flex-grow: 1;
 }
 
+.montage-track-headers-content-wrapper {
+    position: relative;
+    flex-direction: column;
+    min-height: 100%;
+    flex-grow: 1;
+}
+
 .montage-tracks-content-wrapper {
     position: relative;
     flex-direction: column;
@@ -689,64 +696,98 @@
     top: 2px;
     bottom: 2px;
     height: 24px;
-    border-radius: 3px;
+    border-radius: 4px;
     background-color: #3a4454;
     border-width: 1px;
-    border-color: rgba(255, 255, 255, 0.15);
-    border-bottom-width: 3px;
-    border-bottom-color: #4CAF50;
-    flex-direction: row;
-    align-items: center;
-    justify-content: center;
+    border-color: rgba(255, 255, 255, 0.22);
     overflow: hidden;
-    cursor: pan;
 }
 
 .montage-action-block:hover {
-    border-color: rgba(255, 255, 255, 0.5);
+    border-color: rgba(255, 255, 255, 0.35);
 }
 
 .montage-action-block-selected {
-    border-color: #FFCC00;
-    border-width: 2px;
+    border-width: 1px;
+    border-color: #FFFFFF;
+}
+
+.montage-action-block-selected:hover {
+    border-width: 1px;
+    border-color: #FFFFFF;
+}
+
+.montage-action-block-selected .montage-action-block-title {
+    color: #FFFFFF;
+    -unity-font-style: bold;
 }
 
 .montage-action-block-disabled {
     opacity: 0.35;
 }
 
-.montage-action-block-label {
-    color: #FFFFFF;
-    font-size: 11px;
-    -unity-text-align: middle-center;
-    padding-left: 4px;
-    padding-right: 4px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    picking-mode: ignore;
-}
-
-.montage-resize-handle {
+.montage-action-block-content {
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 6px;
+    left: 0;
+    right: 0;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    overflow: hidden;
+    padding-left: 6px;
+    padding-right: 6px;
+}
+
+.montage-action-block-title {
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: #FFFFFF;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    -unity-text-align: middle-left;
+    flex-shrink: 1;
+    min-width: 0;
+    margin-right: 4px;
+}
+
+.montage-action-block-badge {
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: #FFFFFF;
+    background-color: transparent;
+    border-width: 0;
+    padding: 0;
+    margin-left: 6px;
+    -unity-text-align: middle-right;
+    flex-shrink: 0;
+}
+
+.montage-action-block-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 8px;
+    cursor: ew-resize;
     background-color: transparent;
 }
 
-.montage-resize-handle-left {
+.montage-action-block-handle:hover {
+    background-color: rgba(99, 179, 237, 0.65);
+}
+
+.montage-action-block-handle-left {
     left: 0;
-    cursor: resize-horizontal;
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
 }
 
-.montage-resize-handle-right {
+.montage-action-block-handle-right {
     right: 0;
-    cursor: resize-horizontal;
-}
-
-.montage-resize-handle:hover {
-    background-color: rgba(255, 255, 255, 0.3);
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
 }
 
 /* ========================================================================= */
@@ -836,6 +877,55 @@
     font-size: 13px;
     -unity-font-style: bold;
     color: #E0E0E0;
+}
+
+.montage-inspector-tabs {
+    flex-direction: row;
+    background-color: #222222;
+    border-bottom-width: 1px;
+    border-bottom-color: #353535;
+    padding-left: 6px;
+    padding-right: 6px;
+    padding-top: 4px;
+    padding-bottom: 0px;
+}
+
+.montage-inspector-tab-btn {
+    flex: 1;
+    height: 24px;
+    margin-left: 2px;
+    margin-right: 2px;
+    margin-top: 0px;
+    margin-bottom: 0px;
+    padding-left: 8px;
+    padding-right: 8px;
+    border-top-width: 1px;
+    border-left-width: 1px;
+    border-right-width: 1px;
+    border-bottom-width: 0px;
+    border-top-color: transparent;
+    border-left-color: transparent;
+    border-right-color: transparent;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    background-color: transparent;
+    color: #888888;
+    font-size: 11px;
+    -unity-text-align: middle-center;
+}
+
+.montage-inspector-tab-btn:hover {
+    color: #CCCCCC;
+    background-color: #2A2A2A;
+}
+
+.montage-inspector-tab-btn-active {
+    color: #FFFFFF;
+    background-color: #2D2D2D;
+    border-top-color: #3D3D3D;
+    border-left-color: #3D3D3D;
+    border-right-color: #3D3D3D;
+    -unity-font-style: bold;
 }
 
 .montage-inspector-body {
@@ -948,6 +1038,22 @@
     color: #FFFFFF;
 }
 
+.montage-inspector-target-badge {
+    padding-left: 6px;
+    padding-right: 6px;
+    padding-top: 1px;
+    padding-bottom: 1px;
+    margin-left: 8px;
+    border-radius: 3px;
+    background-color: rgba(79, 195, 247, 0.16);
+    border-width: 1px;
+    border-color: rgba(79, 195, 247, 0.35);
+    color: #4FC3F7;
+    font-size: 10px;
+    -unity-font-style: bold;
+    -unity-text-align: middle-center;
+}
+
 .montage-inspector-card {
     background-color: #242424;
     border-radius: 6px;
@@ -1032,3 +1138,173 @@
     margin-top: 2px;
     margin-bottom: 6px;
 }
+
+/* ========================================================================= */
+/* 8. Core Animation Track & Timeline-Style Segments                         */
+/* ========================================================================= */
+
+.montage-anim-track-header {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    background-color: #232832;
+    border-bottom-width: 1px;
+    border-bottom-color: #1A1E24;
+    border-left-width: 3px;
+    border-left-color: #2C6AD4;
+    padding-left: 8px;
+    padding-right: 6px;
+}
+
+.montage-anim-track-title-box {
+    flex-direction: row;
+    align-items: center;
+    flex-grow: 1;
+}
+
+.montage-anim-track-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 3px;
+    background-color: #3884FF;
+    margin-right: 6px;
+}
+
+.montage-anim-track-title {
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: #E2E8F0;
+    margin-right: 6px;
+}
+
+.montage-anim-track-count {
+    font-size: 10px;
+    color: #718096;
+    background-color: #1A202C;
+    padding-left: 5px;
+    padding-right: 5px;
+    padding-top: 1px;
+    padding-bottom: 1px;
+    border-radius: 3px;
+}
+
+.montage-anim-track-content {
+    background-color: #1E232B;
+    border-bottom-width: 1px;
+    border-bottom-color: #171A21;
+}
+
+.montage-anim-segment-block {
+    position: absolute;
+    background-color: #1B385C;
+    border-width: 1px;
+    border-color: #2F649B;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.montage-anim-segment-block:hover {
+    background-color: #1F426D;
+    border-color: #3876B4;
+}
+
+.montage-anim-segment-selected {
+    background-color: #265993;
+    border-width: 1px;
+    border-color: #FFFFFF;
+}
+
+.montage-anim-segment-selected:hover {
+    border-width: 1px;
+    border-color: #FFFFFF;
+}
+
+.montage-anim-segment-selected .montage-anim-segment-title {
+    color: #FFFFFF;
+    -unity-font-style: bold;
+}
+
+.montage-anim-segment-self-content {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    overflow: hidden;
+    padding-left: 6px;
+    padding-right: 6px;
+}
+
+.montage-anim-segment-title {
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: #FFFFFF;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    -unity-text-align: middle-left;
+    flex-shrink: 1;
+    min-width: 0;
+    margin-right: 4px;
+}
+
+.montage-anim-segment-badge {
+    font-size: 11px;
+    -unity-font-style: bold;
+    color: #FFFFFF;
+    background-color: transparent;
+    border-width: 0;
+    padding: 0;
+    margin-left: 6px;
+    -unity-text-align: middle-right;
+    flex-shrink: 0;
+}
+
+.montage-anim-segment-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 8px;
+    cursor: ew-resize;
+    background-color: transparent;
+}
+
+.montage-anim-segment-handle:hover {
+    background-color: rgba(99, 179, 237, 0.65);
+}
+
+.montage-anim-segment-handle-left {
+    left: 0;
+    border-top-left-radius: 4px;
+    border-bottom-left-radius: 4px;
+}
+
+.montage-anim-segment-handle-right {
+    right: 0;
+    border-top-right-radius: 4px;
+    border-bottom-right-radius: 4px;
+}
+
+.montage-anim-crossfade-overlay {
+    position: absolute;
+    border-width: 0;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.montage-anim-crossfade-label {
+    font-size: 9px;
+    -unity-font-style: bold;
+    color: #FFFFFF;
+    background-color: rgba(15, 23, 42, 0.88);
+    border-width: 1px;
+    border-color: rgba(99, 179, 237, 0.5);
+    padding-left: 5px;
+    padding-right: 5px;
+    padding-top: 1px;
+    padding-bottom: 1px;
+    border-radius: 3px;
+}
+

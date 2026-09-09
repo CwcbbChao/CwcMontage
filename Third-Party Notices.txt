@@ -1,0 +1,11 @@
+Third-Party Notices
+===================
+
+This package includes third-party 3D assets provided under the Creative Commons Zero 1.0 Universal (CC0 1.0) Public Domain Dedication license.
+
+1. Character Models & Animation Library (Universal Animation Library):
+   - Creator: Quaternius (https://quaternius.com)
+   - Source: https://quaternius.itch.io/universal-animation-library
+   - License: Creative Commons Zero 1.0 Universal (CC0 1.0) Public Domain Dedication
+   - License Details: https://creativecommons.org/publicdomain/zero/1.0/
+   - Description: Game-ready humanoid rigged character mesh with embedded animations.

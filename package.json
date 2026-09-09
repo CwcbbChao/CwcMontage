@@ -1,0 +1,31 @@
+{
+  "name": "com.cwcbb.cwcmontage",
+  "version": "1.0.0",
+  "displayName": "CwcMontage - Playables Animation Montage System",
+  "description": "A high-performance, lightweight, pure presentation-layer animation montage system for Unity based on Playables API. Features interval sweep sampling, dual-slot ping-pong CrossFade, native physical sections, and seamless Root Motion delegation.",
+  "unity": "2021.3",
+  "unityRelease": "0f1",
+  "keywords": [
+    "animation",
+    "montage",
+    "playables",
+    "action",
+    "act",
+    "rootmotion",
+    "combat",
+    "timeline"
+  ],
+  "author": {
+    "name": "Cwcbb",
+    "url": "https://github.com/CwcbbChao"
+  },
+  "license": "MIT",
+  "samples": [
+    {
+      "displayName": "Montage Demo",
+      "description": "Interactive combat showcase with humanoid animations, audio, VFX, and realtime monitor HUD.",
+      "path": "Demo"
+    }
+  ],
+  "dependencies": {}
+}

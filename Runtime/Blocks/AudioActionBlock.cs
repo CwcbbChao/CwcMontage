@@ -85,8 +85,8 @@ namespace Cwcbb.Tools.CwcMontage
         [SerializeField] private float _fadeOutDuration = 0.1f;
 
         [Header("Attachment")]
-        [Tooltip("音频挂载骨骼（可选，用于 3D 空间音效定位）。")]
-        [SerializeField] private string _attachBoneName;
+        [Tooltip("音频空间定位挂点（精简为 8 个人形核心大骨骼，用于 3D 空间音效发声点）。")]
+        [SerializeField] private MontageTargetBone _targetBone = MontageTargetBone.Root;
 
         #endregion
 
@@ -111,7 +111,7 @@ namespace Cwcbb.Tools.CwcMontage
         public MontageAudioPlayMode PlayMode => _playMode;
         public bool FadeOutOnExit => _fadeOutOnExit;
         public float FadeOutDuration => _fadeOutDuration;
-        public string AttachBoneName => _attachBoneName;
+        public MontageTargetBone TargetBone => _targetBone;
 
         #endregion
 
@@ -133,16 +133,17 @@ namespace Cwcbb.Tools.CwcMontage
                 return;
             }
 
-            // 从对象池获取 AudioSource 通道并配置播放
-            var boneTransform = MontageBoneUtility.FindBone(context.TargetObject, _attachBoneName);
+            // 从对象池获取 AudioSource 通道并配置播放（外部独立挂在池根节点，不侵入角色骨骼）
+            var boneTransform = context.GetTargetBone(_targetBone);
             Vector3 spawnPos = boneTransform != null ? boneTransform.position : context.TargetObject.transform.position;
 
-            _activeAudioSource = MontageObjectPool.GetAudioSource(spawnPos, boneTransform);
+            _activeAudioSource = MontageObjectPool.GetAudioSource(spawnPos, null);
             if (_activeAudioSource == null)
             {
                 return;
             }
 
+            // 原生音高：基础音高 + 随机微调（绝不附加时间轴拉伸变速）
             float finalPitch = _pitch;
             if (_randomPitchOffset > 0.001f)
             {
@@ -165,6 +166,16 @@ namespace Cwcbb.Tools.CwcMontage
 
         public override void OnUpdate(in MontageActionContext context, float deltaTime)
         {
+            // 实时外部同步 3D 发声位置（保持独立层级，不侵入骨骼子物体）
+            if (_activeAudioSource != null && _spatialBlend > 0.01f)
+            {
+                var boneTransform = context.GetTargetBone(_targetBone);
+                if (boneTransform != null)
+                {
+                    _activeAudioSource.transform.position = boneTransform.position;
+                }
+            }
+
             // 单次播放模式若已自然播完，提前安全回收通道
             if (_playMode == MontageAudioPlayMode.OneShot && _activeAudioSource != null)
             {
@@ -209,21 +220,40 @@ namespace Cwcbb.Tools.CwcMontage
                 return;
             }
 
-            // 通过专用音频预览工具输出声音
-            PreviewAudioPlayHandler?.Invoke(_selectedClip, _playMode == MontageAudioPlayMode.LoopDuringBlock);
+            // 通过专用音频预览工具原速输出声音
+            PreviewAudioPlayHandler?.Invoke(
+                _selectedClip,
+                _playMode == MontageAudioPlayMode.LoopDuringBlock);
         }
 
         public override void OnPreviewExit(in MontageActionContext context)
         {
             base.OnPreviewExit(context);
 
-            if (_playMode == MontageAudioPlayMode.LoopDuringBlock)
-            {
-                PreviewAudioStopHandler?.Invoke();
-            }
-
+            PreviewAudioStopHandler?.Invoke();
             _selectedClip = null;
         }
+
+        public override bool RequiresPreviewRecreate(MontageActionBlockBase newBlock)
+        {
+            if (newBlock is AudioActionBlock newAudio)
+            {
+                if (_audioClip != newAudio._audioClip)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public override string GetTimingCustomHint()
+        {
+            if (_audioClip == null && (_randomAudioClips == null || _randomAudioClips.Count == 0)) return null;
+            string clipName = _selectedClip != null ? _selectedClip.name : (_audioClip != null ? _audioClip.name : "Random");
+            float dur = _audioClip != null ? _audioClip.length : 0f;
+            return $"Clip: {clipName} ({dur:F2}s)";
+        }
+
 
         #endregion
 

@@ -91,6 +91,11 @@ namespace Cwcbb.Tools.CwcMontage
         /// </summary>
         public bool IsDisabled => _action != null && !_action.IsEnabled;
 
+        /// <summary>
+        /// 运行时克隆对象所对应的原始资产数据源引用（非序列化）。
+        /// </summary>
+        [NonSerialized] public MontageActionBlockData SourceData;
+
         #endregion
 
         #region 构造方法
@@ -136,6 +141,11 @@ namespace Cwcbb.Tools.CwcMontage
             {
                 _endTime = _startTime + minDuration;
             }
+
+            if (_action != null)
+            {
+                _action.BlockDuration = Duration;
+            }
         }
 
         /// <summary>
@@ -144,7 +154,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <returns>深拷贝后的动作块数据实例</returns>
         public MontageActionBlockData Clone()
         {
-            return new MontageActionBlockData
+            var cloned = new MontageActionBlockData
             {
                 _startTime = _startTime,
                 _endTime = _endTime,
@@ -152,6 +162,12 @@ namespace Cwcbb.Tools.CwcMontage
                 _endFrame = _endFrame,
                 _action = _action != null ? _action.Clone() : null
             };
+            cloned.SourceData = this;
+            if (cloned._action != null)
+            {
+                cloned._action.BlockDuration = cloned.Duration;
+            }
+            return cloned;
         }
 
         #endregion

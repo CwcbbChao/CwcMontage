@@ -37,10 +37,15 @@ namespace Cwcbb.Tools.CwcMontage
         private class SlotState
         {
             public readonly int SlotIndex;
-            public AnimationClipPlayable ClipPlayable;
+            public AnimationMixerPlayable SlotMixer;
+            public readonly List<AnimationClipPlayable> SegmentPlayables = new();
             public MontagePlayer Player;
             public float Weight;
             public int Generation { get; set; } = 1;
+
+            public readonly List<int> TempEvalIndices = new();
+            public readonly List<float> TempEvalTimes = new();
+            public readonly List<float> TempEvalWeights = new();
 
             public bool IsOccupied => Player != null;
 
@@ -49,10 +54,41 @@ namespace Cwcbb.Tools.CwcMontage
                 SlotIndex = slotIndex;
             }
 
+            public void DestroyPlayables(PlayableGraph graph, AnimationMixerPlayable parentMixer)
+            {
+                if (parentMixer.IsValid())
+                {
+                    parentMixer.DisconnectInput(SlotIndex);
+                }
+
+                for (int i = 0; i < SegmentPlayables.Count; i++)
+                {
+                    var cp = SegmentPlayables[i];
+                    if (cp.IsValid() && graph.IsValid())
+                    {
+                        if (SlotMixer.IsValid())
+                        {
+                            SlotMixer.DisconnectInput(i);
+                        }
+                        graph.DestroyPlayable(cp);
+                    }
+                }
+                SegmentPlayables.Clear();
+
+                if (SlotMixer.IsValid() && graph.IsValid())
+                {
+                    graph.DestroyPlayable(SlotMixer);
+                    SlotMixer = default;
+                }
+            }
+
             public void Reset()
             {
                 Player = null;
                 Weight = 0f;
+                TempEvalIndices.Clear();
+                TempEvalTimes.Clear();
+                TempEvalWeights.Clear();
             }
         }
 
@@ -101,6 +137,7 @@ namespace Cwcbb.Tools.CwcMontage
         private MontageAnimatorDispatcher _animatorDispatcher;
 
         private readonly List<LayerRuntimeState> _layerStates = new(4);
+        private readonly Transform[] _cachedBones = new Transform[MontageBoneUtility.BONE_COUNT];
         private IMontageRootMotionReceiver _cachedReceiver;
 
         private bool _isGraphInitialized;
@@ -251,9 +288,9 @@ namespace Cwcbb.Tools.CwcMontage
             float? customBlendInTime = null,
             AnimationCurve customBlendInCurve = null)
         {
-            if (montage == null || montage.AnimationClip == null)
+            if (montage == null || montage.AnimationSegments == null || montage.AnimationSegments.Count == 0)
             {
-                Debug.LogWarning($"[MontageCoordinator] 物体 '{gameObject.name}' 无法播放：montage 或其绑定的 AnimationClip 为空。");
+                Debug.LogWarning($"[MontageCoordinator] 物体 '{gameObject.name}' 无法播放：montage 为空或未配置任何动画片段 (AnimationSegments)。");
                 return MontageHandle.Invalid;
             }
 
@@ -300,21 +337,38 @@ namespace Cwcbb.Tools.CwcMontage
             if (newSlot.Generation <= 0) newSlot.Generation = 1;
 
             // 5. 清理新 Slot 原有遗留 Playable 连接
-            if (newSlot.ClipPlayable.IsValid())
+            newSlot.DestroyPlayables(_playableGraph, layerState.LayerMixer);
+
+            // 6. 构建多片段内部 Mixer 并接入 Slot
+            var segments = montage.AnimationSegments;
+            int segCount = segments.Count;
+
+            var slotMixer = AnimationMixerPlayable.Create(_playableGraph, segCount);
+            newSlot.SlotMixer = slotMixer;
+            newSlot.SegmentPlayables.Clear();
+
+            for (int s = 0; s < segCount; s++)
             {
-                layerState.LayerMixer.DisconnectInput(newSlot.SlotIndex);
-                _playableGraph.DestroyPlayable(newSlot.ClipPlayable);
+                var seg = segments[s];
+                var clipToUse = seg?.Clip;
+                var cp = clipToUse != null
+                    ? AnimationClipPlayable.Create(_playableGraph, clipToUse)
+                    : default;
+
+                if (cp.IsValid())
+                {
+                    cp.SetApplyFootIK(montage.IsFootIK);
+                    cp.SetSpeed(1.0f);
+                    slotMixer.ConnectInput(s, cp, 0);
+                }
+
+                slotMixer.SetInputWeight(s, s == 0 ? 1.0f : 0.0f);
+                newSlot.SegmentPlayables.Add(cp);
             }
 
-            // 6. 构建新的 ClipPlayable 并接入新 Slot
-            var clipPlayable = AnimationClipPlayable.Create(_playableGraph, montage.AnimationClip);
-            clipPlayable.SetApplyFootIK(montage.IsFootIK);
-            clipPlayable.SetSpeed(1.0f);
-
-            layerState.LayerMixer.ConnectInput(newSlot.SlotIndex, clipPlayable, 0);
+            layerState.LayerMixer.ConnectInput(newSlot.SlotIndex, slotMixer, 0);
             layerState.LayerMixer.SetInputWeight(newSlot.SlotIndex, 0.0f);
 
-            newSlot.ClipPlayable = clipPlayable;
             newSlot.Weight = 0.0f;
 
             // 7. 实例化运行时播放器
@@ -324,7 +378,8 @@ namespace Cwcbb.Tools.CwcMontage
                 _animator,
                 blendInDuration,
                 customBlendInCurve,
-                isPreview: false);
+                isPreview: false,
+                coordinator: this);
 
             newSlot.Player = player;
             layerState.ActiveSlotIndex = newSlotIndex;
@@ -455,6 +510,22 @@ namespace Cwcbb.Tools.CwcMontage
             }
         }
 
+        /// <summary>
+        /// 获取当前角色绑定的目标核心大骨骼 Transform（O(1) 零 GC 极速读取）。
+        /// </summary>
+        /// <param name="targetBone">核心大骨骼枚举</param>
+        /// <returns>目标骨骼 Transform，保底回退返回角色自身 transform</returns>
+        public Transform GetTargetBone(MontageTargetBone targetBone)
+        {
+            int index = (int)targetBone;
+            if (index >= 0 && index < _cachedBones.Length)
+            {
+                var bone = _cachedBones[index];
+                if (bone != null) return bone;
+            }
+            return transform;
+        }
+
         #endregion
 
         #region 初始化与图拓扑构建 (固定双缓冲槽)
@@ -498,6 +569,7 @@ namespace Cwcbb.Tools.CwcMontage
             if (_animator == null) return;
 
             _originalController = _animator.runtimeAnimatorController;
+            MontageBoneUtility.ResolveBones(gameObject, _animator, _cachedBones);
 
             // 在 Animator 所在物体上挂载中介派发组件，拦截 Unity 原生 Root Motion 并转交 Coordinator
             _animatorDispatcher = _animator.GetComponent<MontageAnimatorDispatcher>();
@@ -647,11 +719,30 @@ namespace Cwcbb.Tools.CwcMontage
             var player = slot.Player;
             player.Tick(deltaTime);
 
-            if (slot.ClipPlayable.IsValid())
+            if (slot.SlotMixer.IsValid() && slot.SegmentPlayables.Count > 0)
             {
-                // 权威时钟同步：将 Player 计算的 Clip 采样时间绝对对齐至底层 Playable，保持速度活跃以正确采样关键帧姿态
-                slot.ClipPlayable.SetTime(player.ClipSampleTime);
-                slot.ClipPlayable.SetSpeed(1.0f);
+                player.EvaluateAnimationSegments(slot.TempEvalIndices, slot.TempEvalTimes, slot.TempEvalWeights);
+
+                int count = slot.SegmentPlayables.Count;
+                for (int i = 0; i < count; i++)
+                {
+                    slot.SlotMixer.SetInputWeight(i, 0.0f);
+                }
+
+                for (int k = 0; k < slot.TempEvalIndices.Count; k++)
+                {
+                    int segIdx = slot.TempEvalIndices[k];
+                    if (segIdx >= 0 && segIdx < count)
+                    {
+                        var cp = slot.SegmentPlayables[segIdx];
+                        if (cp.IsValid())
+                        {
+                            cp.SetTime(slot.TempEvalTimes[k]);
+                            cp.SetSpeed(1.0f);
+                        }
+                        slot.SlotMixer.SetInputWeight(segIdx, slot.TempEvalWeights[k]);
+                    }
+                }
             }
         }
 
@@ -663,12 +754,7 @@ namespace Cwcbb.Tools.CwcMontage
             // 只有当播放器彻底标记为 Finished 且在混音器中的实际权重归零时，才安全销毁 Playable 并释放 Slot
             if (player.IsFinished && slot.Weight <= 0.0001f)
             {
-                if (slot.ClipPlayable.IsValid())
-                {
-                    mixer.DisconnectInput(slot.SlotIndex);
-                    _playableGraph.DestroyPlayable(slot.ClipPlayable);
-                }
-
+                slot.DestroyPlayables(_playableGraph, mixer);
                 UnbindPlayerEvents(player);
                 slot.Reset();
             }

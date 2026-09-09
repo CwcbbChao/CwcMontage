@@ -27,6 +27,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         private float _clipLength = 1f;
         private float _frameRate = 30f;
         private float _zoomLevel = 1.0f;
+        private float _contentDuration = 0f;
 
         private VisualElement _headerElement;
         private VisualElement _contentElement;
@@ -83,7 +84,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _targetAsset = targetAsset;
             _clipLength = Mathf.Max(0.001f, clipLength);
             _frameRate = Mathf.Max(1f, frameRate);
-            _zoomLevel = Mathf.Clamp(zoomLevel, 0.1f, 20f);
+            _zoomLevel = Mathf.Clamp(zoomLevel, 0.005f, 20f);
 
             // 1. 左侧 Header
             _headerElement = new VisualElement();
@@ -134,11 +135,12 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         #region 公共方法
 
-        public void SetTargetAsset(MontageSequenceSO asset, float clipLength, float frameRate)
+        public void SetTargetAsset(MontageSequenceSO asset, float clipLength, float frameRate, float contentDuration = -1f)
         {
             _targetAsset = asset;
             _clipLength = Mathf.Max(0.001f, clipLength);
             _frameRate = Mathf.Max(1f, frameRate);
+            _contentDuration = contentDuration >= 0f ? contentDuration : (_targetAsset != null ? _targetAsset.TotalDuration : _clipLength);
             _contentElement.style.width = ContentPixelWidth;
             UpdateHandles();
             _contentElement.MarkDirtyRepaint();
@@ -146,7 +148,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public void SetZoom(float zoomLevel)
         {
-            _zoomLevel = Mathf.Clamp(zoomLevel, 0.1f, 20f);
+            _zoomLevel = Mathf.Clamp(zoomLevel, 0.005f, 20f);
             _contentElement.style.width = ContentPixelWidth;
             UpdateHandles();
             _contentElement.MarkDirtyRepaint();
@@ -171,6 +173,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
             int splitCount = _liveSplitTimes.Count;
             int sectionCount = splitCount + 1;
+            float activeEnd = _contentDuration > 0.001f ? _contentDuration : _clipLength;
 
             Color sectionColorEven = new Color(0.18f, 0.24f, 0.32f, 0.85f);
             Color sectionColorOdd = new Color(0.14f, 0.19f, 0.26f, 0.85f);
@@ -179,10 +182,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             for (int s = 0; s < sectionCount; s++)
             {
                 float start = s == 0 ? 0f : _liveSplitTimes[s - 1];
-                float end = s == splitCount ? _clipLength : _liveSplitTimes[s];
+                float end = s == splitCount ? Mathf.Max(start, activeEnd) : _liveSplitTimes[s];
                 float xStart = start * pps;
                 float xEnd = end * pps;
-                float sWidth = Mathf.Max(1f, xEnd - xStart);
+                float sWidth = Mathf.Max(0f, xEnd - xStart);
+                if (sWidth <= 0.001f) continue;
 
                 // 填充色块背景
                 painter.fillColor = (s % 2 == 0) ? sectionColorEven : sectionColorOdd;
@@ -202,6 +206,18 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 painter.LineTo(new Vector2(xStart, totalHeight));
                 painter.MoveTo(new Vector2(xEnd, 0));
                 painter.LineTo(new Vector2(xEnd, totalHeight));
+                painter.Stroke();
+            }
+
+            // 绘制内容结束指示线 (Content End Boundary Marker)
+            if (_contentDuration > 0.001f && _contentDuration <= _clipLength)
+            {
+                float endX = _contentDuration * pps;
+                painter.strokeColor = new Color(0.35f, 0.65f, 1.0f, 0.65f);
+                painter.lineWidth = 1.5f;
+                painter.BeginPath();
+                painter.MoveTo(new Vector2(endX, 0));
+                painter.LineTo(new Vector2(endX, totalHeight));
                 painter.Stroke();
             }
 
@@ -230,10 +246,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             // 1. 添加分段文字 Label
             int splitCount = _liveSplitTimes.Count;
             int sectionCount = splitCount + 1;
+            float activeEnd = _contentDuration > 0.001f ? _contentDuration : _clipLength;
             for (int s = 0; s < sectionCount; s++)
             {
                 float start = s == 0 ? 0f : _liveSplitTimes[s - 1];
-                float end = s == splitCount ? _clipLength : _liveSplitTimes[s];
+                float end = s == splitCount ? Mathf.Max(start, activeEnd) : _liveSplitTimes[s];
                 float xStart = start * pps;
                 float xEnd = end * pps;
                 float sWidth = xEnd - xStart;
@@ -292,7 +309,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         {
             Vector2 localPos = evt.localMousePosition;
             float pps = PixelsPerSecond;
-            float clickTime = Mathf.Clamp(localPos.x / pps, 0f, _clipLength);
+            float rawTime = Mathf.Clamp(localPos.x / pps, 0f, _clipLength);
+            float frameInterval = 1f / Mathf.Max(1f, _frameRate);
+            float clickTime = Mathf.Clamp(Mathf.Round(rawTime / frameInterval) * frameInterval, 0f, _clipLength);
 
             if (evt.button == 0) // 左键选择或拖拽
             {
@@ -321,14 +340,14 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 if (hitIndex >= 0)
                 {
                     int capturedIdx = hitIndex;
-                    menu.AddItem(new GUIContent($"Delete Section Split #{capturedIdx + 1}"), false, () =>
+                    menu.AddItem(new GUIContent("Delete Section Split"), false, () =>
                     {
                         OnSplitRemoved?.Invoke(capturedIdx);
                     });
                 }
                 else
                 {
-                    menu.AddItem(new GUIContent($"Add Section Split at {clickTime:F3}s"), false, () =>
+                    menu.AddItem(new GUIContent("Add Section Split"), false, () =>
                     {
                         OnSplitAdded?.Invoke(clickTime);
                     });
@@ -353,9 +372,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             float frameInterval = 1f / _frameRate;
             float snappedTime = Mathf.Round(rawTime / frameInterval) * frameInterval;
 
-            // 限制切分范围
+            // 限制切分范围：末尾切分点可自由延展至画布边缘留白区
             float minTime = _draggingSplitIndex == 0 ? frameInterval : _liveSplitTimes[_draggingSplitIndex - 1] + frameInterval;
-            float maxTime = _draggingSplitIndex == _liveSplitTimes.Count - 1 ? _clipLength - frameInterval : _liveSplitTimes[_draggingSplitIndex + 1] - frameInterval;
+            float maxTime = _draggingSplitIndex == _liveSplitTimes.Count - 1
+                ? Mathf.Max(minTime + frameInterval, _clipLength - frameInterval)
+                : _liveSplitTimes[_draggingSplitIndex + 1] - frameInterval;
 
             snappedTime = Mathf.Clamp(snappedTime, minTime, maxTime);
 

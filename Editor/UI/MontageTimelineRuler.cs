@@ -18,6 +18,10 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public const float TOTAL_HEADER_HEIGHT = 24f;
         private const float BASE_PIXELS_PER_SECOND = 200f;
+        private static readonly float[] s_tickSecondCandidates = new float[]
+        {
+            0.5f, 1f, 2f, 5f, 10f, 20f, 30f, 60f, 120f, 300f, 600f, 1200f, 1800f, 3600f
+        };
 
         #endregion
 
@@ -28,6 +32,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         private float _frameRate = 30f;
         private float _currentTime = 0f;
         private float _zoomLevel = 1.0f;
+        private float _contentDuration = 0f;
 
         private VisualElement _contentContainer;
         private VisualElement _tickLabelsContainer;
@@ -147,11 +152,20 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _currentTime = Mathf.Clamp(currentTime, 0f, Mathf.Max(0.001f, clipLength));
             _clipLength = Mathf.Max(0.001f, clipLength);
             _frameRate = Mathf.Max(1f, frameRate);
-            _zoomLevel = Mathf.Clamp(zoomLevel, 0.1f, 20f);
+            _zoomLevel = Mathf.Clamp(zoomLevel, 0.005f, 20f);
 
             UpdateContentSize();
             UpdatePlayheadPosition();
             _contentContainer.MarkDirtyRepaint();
+        }
+
+        /// <summary>
+        /// 设置权威逻辑内容总时长（用于绘制结束标头与边界线）。
+        /// </summary>
+        public void SetContentDuration(float duration)
+        {
+            _contentDuration = Mathf.Max(0f, duration);
+            _contentContainer?.MarkDirtyRepaint();
         }
 
         /// <summary>
@@ -168,7 +182,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         /// </summary>
         public void SetZoom(float zoomLevel)
         {
-            _zoomLevel = Mathf.Clamp(zoomLevel, 0.1f, 20f);
+            _zoomLevel = Mathf.Clamp(zoomLevel, 0.005f, 20f);
             UpdateContentSize();
             UpdatePlayheadPosition();
             _contentContainer.MarkDirtyRepaint();
@@ -187,16 +201,51 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         #region 私有渲染逻辑 (Vector Graphics 零 GC 绘制)
 
         /// <summary>
-        /// 根据当前帧的像素宽度智能计算主次刻度帧间隔步长。
+        /// 根据当前帧的像素宽度智能对数对齐计算主次刻度帧间隔步长（涵盖 1 帧到 1 小时各级尺度，主刻度始终保持 70~140px 舒适间距）。
         /// </summary>
-        public static (int majorInterval, int mediumInterval) CalculateTickIntervals(float frameWidth)
+        public static (int majorInterval, int mediumInterval) CalculateTickIntervals(float frameWidth, float frameRate = 30f)
         {
-            if (frameWidth >= 40f) return (1, 1);
-            if (frameWidth >= 20f) return (5, 1);
-            if (frameWidth >= 8f) return (10, 5);
-            if (frameWidth >= 3f) return (30, 5);
-            if (frameWidth >= 1f) return (60, 30);
-            return (150, 30);
+            frameRate = Mathf.Max(1f, frameRate);
+
+            // 1. 微观子秒级刻度候选（1 帧、2 帧、5 帧、10 帧）
+            if (frameWidth * 1f >= 75f) return (1, 1);
+            if (frameWidth * 2f >= 75f) return (2, 1);
+            if (frameWidth * 5f >= 75f) return (5, 1);
+            if (frameWidth * 10f >= 75f) return (10, 5);
+
+            // 2. 宏观对数秒/分/时级刻度候选
+            float pps = frameRate * frameWidth;
+            int chosenMajor = Mathf.RoundToInt(3600f * frameRate);
+            for (int i = 0; i < s_tickSecondCandidates.Length; i++)
+            {
+                float px = s_tickSecondCandidates[i] * pps;
+                if (px >= 75f)
+                {
+                    chosenMajor = Mathf.RoundToInt(s_tickSecondCandidates[i] * frameRate);
+                    break;
+                }
+            }
+
+            // 3. 中刻度依阶数自适应细分
+            int chosenMedium;
+            if (chosenMajor <= 2)
+            {
+                chosenMedium = 1;
+            }
+            else if (chosenMajor % 5 == 0)
+            {
+                chosenMedium = chosenMajor / 5;
+            }
+            else if (chosenMajor % 2 == 0)
+            {
+                chosenMedium = chosenMajor / 2;
+            }
+            else
+            {
+                chosenMedium = Mathf.Max(1, chosenMajor / 2);
+            }
+
+            return (chosenMajor, chosenMedium);
         }
 
         private void OnGenerateVisualContent(MeshGenerationContext mgc)
@@ -215,17 +264,21 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             // 绘制时间轴刻度线 (Ruler Ticks)
             int totalFrames = Mathf.Max(1, Mathf.RoundToInt(_clipLength * _frameRate));
             float frameWidth = pps / _frameRate;
-            var (majorInterval, mediumInterval) = CalculateTickIntervals(frameWidth);
+            var (majorInterval, mediumInterval) = CalculateTickIntervals(frameWidth, _frameRate);
 
             Color majorTickColor = new Color(0.85f, 0.85f, 0.85f, 0.95f);
             Color mediumTickColor = new Color(0.55f, 0.55f, 0.55f, 0.75f);
             Color minorTickColor = new Color(0.35f, 0.35f, 0.35f, 0.45f);
 
-            for (int f = 0; f <= totalFrames; f++)
+            bool drawMinor = frameWidth >= 4f;
+            bool drawMedium = (mediumInterval * frameWidth) >= 6f;
+            int step = drawMinor ? 1 : (drawMedium ? mediumInterval : majorInterval);
+
+            for (int f = 0; f <= totalFrames; f += step)
             {
                 float x = f * frameWidth;
                 bool isMajor = (f % majorInterval == 0);
-                bool isMedium = (!isMajor && f % mediumInterval == 0);
+                bool isMedium = (!isMajor && mediumInterval > 0 && f % mediumInterval == 0);
 
                 painter.strokeColor = isMajor ? majorTickColor : (isMedium ? mediumTickColor : minorTickColor);
                 painter.lineWidth = isMajor ? 1.2f : 1f;
@@ -241,7 +294,6 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 }
                 else
                 {
-                    if (frameWidth < 4f) continue; // 过密时略过微小副刻度
                     tickTop = 16f;
                 }
 
@@ -249,6 +301,27 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 painter.MoveTo(new Vector2(x, totalHeight));
                 painter.LineTo(new Vector2(x, tickTop));
                 painter.Stroke();
+            }
+
+            // 绘制逻辑内容结束线 (Content End Boundary Marker)
+            if (_contentDuration > 0.001f && _contentDuration <= _clipLength)
+            {
+                float endX = _contentDuration * pps;
+                painter.strokeColor = new Color(0.35f, 0.65f, 1.0f, 0.9f);
+                painter.lineWidth = 1.5f;
+                painter.BeginPath();
+                painter.MoveTo(new Vector2(endX, 0));
+                painter.LineTo(new Vector2(endX, totalHeight));
+                painter.Stroke();
+
+                // 顶部向下三角标识 (End Cap Flag)
+                painter.fillColor = new Color(0.35f, 0.65f, 1.0f, 0.9f);
+                painter.BeginPath();
+                painter.MoveTo(new Vector2(endX - 4f, 0));
+                painter.LineTo(new Vector2(endX + 4f, 0));
+                painter.LineTo(new Vector2(endX, 6f));
+                painter.ClosePath();
+                painter.Fill();
             }
 
             // 底部横向分割线
@@ -265,27 +338,39 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             float width = ContentPixelWidth;
             _contentContainer.style.width = width;
 
-            // 重新排布刻度数字 Label
-            for (int i = 0; i < _tickLabels.Count; i++)
-            {
-                _tickLabels[i].RemoveFromHierarchy();
-            }
-            _tickLabels.Clear();
-
             int totalFrames = Mathf.Max(1, Mathf.RoundToInt(_clipLength * _frameRate));
             float frameWidth = PixelsPerSecond / _frameRate;
-            var (majorInterval, _) = CalculateTickIntervals(frameWidth);
+            var (majorInterval, _) = CalculateTickIntervals(frameWidth, _frameRate);
 
+            // 复用对象池中的 Label，避免每次缩放/重绘时产生 GC 分配与冗余开销
+            int labelIdx = 0;
             for (int f = 0; f <= totalFrames; f += majorInterval)
             {
                 float x = f * frameWidth;
-                var lbl = new Label(f.ToString());
-                lbl.AddToClassList("montage-ruler-tick-label");
+                Label lbl;
+                if (labelIdx < _tickLabels.Count)
+                {
+                    lbl = _tickLabels[labelIdx];
+                    lbl.style.display = DisplayStyle.Flex;
+                }
+                else
+                {
+                    lbl = new Label();
+                    lbl.AddToClassList("montage-ruler-tick-label");
+                    lbl.style.top = 1f;
+                    lbl.pickingMode = PickingMode.Ignore;
+                    _tickLabelsContainer.Add(lbl);
+                    _tickLabels.Add(lbl);
+                }
+
+                lbl.text = f.ToString();
                 lbl.style.left = x + 3f;
-                lbl.style.top = 1f;
-                lbl.pickingMode = PickingMode.Ignore;
-                _tickLabelsContainer.Add(lbl);
-                _tickLabels.Add(lbl);
+                labelIdx++;
+            }
+
+            for (int i = labelIdx; i < _tickLabels.Count; i++)
+            {
+                _tickLabels[i].style.display = DisplayStyle.None;
             }
         }
 
@@ -304,7 +389,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         {
             Vector2 localPos = _contentContainer.WorldToLocal(evt.mousePosition);
             float pps = PixelsPerSecond;
-            float clickTime = Mathf.Clamp(localPos.x / pps, 0f, _clipLength);
+            float rawTime = Mathf.Clamp(localPos.x / pps, 0f, _clipLength);
+            float frameInterval = 1f / Mathf.Max(1f, _frameRate);
+            float clickTime = Mathf.Clamp(Mathf.Round(rawTime / frameInterval) * frameInterval, 0f, _clipLength);
 
             if (evt.button == 0) // 左键跳帧并开始拖拽游标
             {
@@ -328,7 +415,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             {
                 Vector2 localPos = _contentContainer.WorldToLocal(evt.mousePosition);
                 float pps = PixelsPerSecond;
-                float newTime = Mathf.Clamp(localPos.x / pps, 0f, _clipLength);
+                float rawTime = Mathf.Clamp(localPos.x / pps, 0f, _clipLength);
+                float frameInterval = 1f / Mathf.Max(1f, _frameRate);
+                float newTime = Mathf.Clamp(Mathf.Round(rawTime / frameInterval) * frameInterval, 0f, _clipLength);
 
                 _currentTime = newTime;
                 UpdatePlayheadPosition();

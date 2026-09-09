@@ -26,8 +26,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         // 相机参数
         private float _cameraDistance = 4.5f;
         private Vector3 _cameraTarget = new Vector3(0f, 1f, 0f);
-        private float _cameraYaw = 180f;
-        private float _cameraPitch = 0f;
+        private float _cameraYaw = 225f; // 前方 45 度视角 (180° + 45°)
+        private float _cameraPitch = 12f; // 稍微俯视角 (12° 俯视，增强立体前后上下空间感)
         private bool _isRightMouseButtonHeld;
         private bool _isMiddleMouseButtonHeld;
         private readonly HashSet<KeyCode> _pressedKeys = new();
@@ -370,8 +370,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             {
                 _cameraTarget = new Vector3(0f, 1f, 0f);
                 _cameraDistance = 4.5f;
-                _cameraYaw = 180f;
-                _cameraPitch = 0f;
+                _cameraYaw = 225f; // 前方 45 度视角 (180° + 45°)
+                _cameraPitch = 12f; // 稍微俯视角 (12° 俯视，增强立体前后上下空间感)
             }
             RenderImmediate();
         }

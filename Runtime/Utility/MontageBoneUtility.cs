@@ -1,122 +1,112 @@
 using System;
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace Cwcbb.Tools.CwcMontage
 {
     /// <summary>
-    /// 蒙太奇骨骼与挂载点检索工具。
-    /// 提供 Humanoid 骨骼映射、名称精准/模糊匹配以及高速缓存机制，
-    /// 避免在 ActionBlock 触发时频繁进行深层 Hierarchy 遍历。
+    /// 蒙太奇核心目标骨骼枚举。
+    /// 收敛为动作游戏中最常用的 8 个人形核心大骨骼，100% 对应 Unity Humanoid 必需骨骼，确保任何模型都能稳健绑定。
+    /// </summary>
+    public enum MontageTargetBone
+    {
+        Root = 0,
+        Hips = 1,
+        Spine = 2,
+        Head = 3,
+        RightHand = 4,
+        LeftHand = 5,
+        RightFoot = 6,
+        LeftFoot = 7
+    }
+
+    /// <summary>
+    /// 蒙太奇骨骼快速解析工具。
+    /// 提供 8 核心骨骼的快速映射与安全检索，零静态内存驻留，零堆内存分配。
     /// </summary>
     public static class MontageBoneUtility
     {
-        #region 私有静态字段
+        #region 常量与静态字段
 
-        private static readonly Dictionary<int, Dictionary<string, Transform>> _boneCache = new(32);
+        public const int BONE_COUNT = 8;
 
         #endregion
 
         #region 公共方法
 
         /// <summary>
-        /// 查找目标宿主对象上的指定骨骼 Transform。
+        /// 一次性解析并填充宿主对象上的 8 核心大骨骼数组（零 GC 分配）。
         /// </summary>
         /// <param name="targetObject">宿主根 GameObject</param>
-        /// <param name="boneName">骨骼或挂点名称（可选）</param>
-        /// <param name="humanoidBone">HumanBodyBones 枚举（可选）</param>
-        /// <param name="targetAnimator">目标 Animator 组件（可选）</param>
+        /// <param name="animator">目标 Animator 组件</param>
+        /// <param name="outBones">接收骨骼 Transform 的目标数组（长度必须 >= 8）</param>
+        public static void ResolveBones(GameObject targetObject, Animator animator, Transform[] outBones)
+        {
+            if (outBones == null || outBones.Length < BONE_COUNT) return;
+
+            Transform root = targetObject != null ? targetObject.transform : null;
+            outBones[(int)MontageTargetBone.Root] = root;
+
+            if (animator != null && animator.isHuman)
+            {
+                outBones[(int)MontageTargetBone.Hips] = animator.GetBoneTransform(HumanBodyBones.Hips) ?? root;
+                outBones[(int)MontageTargetBone.Spine] = animator.GetBoneTransform(HumanBodyBones.Spine) ?? root;
+                outBones[(int)MontageTargetBone.Head] = animator.GetBoneTransform(HumanBodyBones.Head) ?? root;
+                outBones[(int)MontageTargetBone.RightHand] = animator.GetBoneTransform(HumanBodyBones.RightHand) ?? root;
+                outBones[(int)MontageTargetBone.LeftHand] = animator.GetBoneTransform(HumanBodyBones.LeftHand) ?? root;
+                outBones[(int)MontageTargetBone.RightFoot] = animator.GetBoneTransform(HumanBodyBones.RightFoot) ?? root;
+                outBones[(int)MontageTargetBone.LeftFoot] = animator.GetBoneTransform(HumanBodyBones.LeftFoot) ?? root;
+            }
+            else
+            {
+                for (int i = 1; i < BONE_COUNT; i++)
+                {
+                    outBones[i] = root;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 单次安全解析特定核心骨骼（带安全回退根节点保护）。
+        /// </summary>
+        /// <param name="targetObject">宿主根 GameObject</param>
+        /// <param name="animator">目标 Animator 组件</param>
+        /// <param name="boneType">目标核心骨骼枚举</param>
         /// <returns>找到的骨骼 Transform，若未找到则安全回退返回 targetObject.transform</returns>
-        public static Transform FindBone(
-            GameObject targetObject,
-            string boneName = null,
-            HumanBodyBones humanoidBone = HumanBodyBones.LastBone,
-            Animator targetAnimator = null)
+        public static Transform ResolveBone(GameObject targetObject, Animator animator, MontageTargetBone boneType)
         {
-            if (targetObject == null)
+            if (targetObject == null) return null;
+            Transform root = targetObject.transform;
+            if (boneType == MontageTargetBone.Root || animator == null || !animator.isHuman)
             {
-                return null;
+                return root;
             }
 
-            // 1. 若指定了具体的 Humanoid 骨骼（非 LastBone）且存在有效 Animator，优先通过 Animator 获取
-            if (humanoidBone != HumanBodyBones.LastBone)
+            HumanBodyBones humanBone = ToHumanBodyBone(boneType);
+            if (humanBone != HumanBodyBones.LastBone)
             {
-                var anim = targetAnimator != null ? targetAnimator : targetObject.GetComponentInChildren<Animator>();
-                if (anim != null && anim.isHuman)
-                {
-                    var boneTransform = anim.GetBoneTransform(humanoidBone);
-                    if (boneTransform != null)
-                    {
-                        return boneTransform;
-                    }
-                }
+                var t = animator.GetBoneTransform(humanBone);
+                if (t != null) return t;
             }
 
-            // 2. 若未配置骨骼名称，直接返回根物体
-            if (string.IsNullOrWhiteSpace(boneName))
-            {
-                return targetObject.transform;
-            }
-
-            int rootId = targetObject.GetInstanceID();
-            if (!_boneCache.TryGetValue(rootId, out var dict))
-            {
-                dict = new Dictionary<string, Transform>(StringComparer.OrdinalIgnoreCase);
-                _boneCache[rootId] = dict;
-            }
-
-            if (dict.TryGetValue(boneName, out var cachedTransform))
-            {
-                if (cachedTransform != null)
-                {
-                    return cachedTransform;
-                }
-                dict.Remove(boneName);
-            }
-
-            // 3. 在所有子节点中按名称查找
-            var allTransforms = targetObject.GetComponentsInChildren<Transform>(true);
-            for (int i = 0; i < allTransforms.Length; i++)
-            {
-                var t = allTransforms[i];
-                if (string.Equals(t.name, boneName, StringComparison.OrdinalIgnoreCase))
-                {
-                    dict[boneName] = t;
-                    return t;
-                }
-            }
-
-            // 4. 尝试包含匹配
-            for (int i = 0; i < allTransforms.Length; i++)
-            {
-                var t = allTransforms[i];
-                if (t.name.IndexOf(boneName, StringComparison.OrdinalIgnoreCase) >= 0)
-                {
-                    dict[boneName] = t;
-                    return t;
-                }
-            }
-
-            // 5. 未匹配到具体骨骼时安全回退
-            dict[boneName] = targetObject.transform;
-            return targetObject.transform;
+            return root;
         }
 
         /// <summary>
-        /// 清理指定宿主对象的骨骼缓存（在角色销毁时调用）。
+        /// 将 8 核心骨骼枚举映射为 Unity 原生 HumanBodyBones 枚举。
         /// </summary>
-        public static void ClearCache(GameObject targetObject)
+        public static HumanBodyBones ToHumanBodyBone(MontageTargetBone boneType)
         {
-            if (targetObject == null) return;
-            _boneCache.Remove(targetObject.GetInstanceID());
-        }
-
-        /// <summary>
-        /// 清理全局所有骨骼缓存。
-        /// </summary>
-        public static void ClearAllCache()
-        {
-            _boneCache.Clear();
+            return boneType switch
+            {
+                MontageTargetBone.Hips => HumanBodyBones.Hips,
+                MontageTargetBone.Spine => HumanBodyBones.Spine,
+                MontageTargetBone.Head => HumanBodyBones.Head,
+                MontageTargetBone.RightHand => HumanBodyBones.RightHand,
+                MontageTargetBone.LeftHand => HumanBodyBones.LeftHand,
+                MontageTargetBone.RightFoot => HumanBodyBones.RightFoot,
+                MontageTargetBone.LeftFoot => HumanBodyBones.LeftFoot,
+                _ => HumanBodyBones.LastBone
+            };
         }
 
         #endregion

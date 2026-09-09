@@ -26,17 +26,18 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         static MontageAudioPreviewUtility()
         {
             EnsureInitialized();
-            AudioActionBlock.PreviewAudioPlayHandler = (clip, loop) => PlayClip(clip, 0, loop);
-            AudioActionBlock.PreviewAudioStopHandler = StopAllClips;
         }
 
         #endregion
 
         #region 初始化
 
-        private static void EnsureInitialized()
+        /// <summary>
+        /// 确保编辑器音频工具已完成底层反射与委托注入。
+        /// </summary>
+        public static void EnsureInitialized()
         {
-            if (s_isInitialized) return;
+            if (s_isInitialized && s_playPreviewClipMethod != null && s_stopAllPreviewClipsMethod != null) return;
 
             var audioUtilType = typeof(UnityEditor.Editor).Assembly.GetType("UnityEditor.AudioUtil");
             if (audioUtilType != null)
@@ -53,12 +54,32 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                     BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
             }
 
+            AudioActionBlock.PreviewAudioPlayHandler = (clip, loop) => PlayPreview(clip, loop);
+            AudioActionBlock.PreviewAudioStopHandler = StopAllClips;
+
             s_isInitialized = true;
         }
 
         #endregion
 
         #region 公共方法
+
+        /// <summary>
+        /// 在编辑器视口预览中播放指定音频。
+        /// 采用 Unity 编辑器原生底层接口直接播放原始音频资产，0 内存开销、0 延迟、无视音频压缩格式（MP3/WAV/OGG/Vorbis），100% 稳定可靠。
+        /// </summary>
+        /// <param name="clip">原始音频片段</param>
+        /// <param name="loop">是否循环播放</param>
+        public static void PlayPreview(AudioClip clip, bool loop = false)
+        {
+            if (clip == null) return;
+
+            EnsureInitialized();
+            StopAllClips(); // 停止旧声音
+
+            // 直接调用 Unity 原生底层接口播放 AudioClip 资产
+            PlayClip(clip, 0, loop);
+        }
 
         /// <summary>
         /// 在编辑器中即时播放指定的 AudioClip 预览。

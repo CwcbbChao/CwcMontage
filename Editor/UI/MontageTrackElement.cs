@@ -30,6 +30,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         private float _clipLength = 1f;
         private float _frameRate = 30f;
         private float _zoomLevel = 1.0f;
+        private float _contentDuration = 0f;
 
         private Type[] _actionTypes;
         private string[] _actionTypeNames;
@@ -52,6 +53,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public event Action<MontageTrackElement> OnTrackSelected;
         public event Action<MontageActionBlockElement> OnBlockSelected;
+        public event Action<MontageActionBlockElement> OnBlockClicked;
+        public event Action<MontageActionBlockElement> OnBlockMoving;
+        public event Action<MontageActionBlockElement, float> OnBlockDraggingGlobalSync;
         public event Action<MontageTrackElement, Type, float> OnAddBlockAtTime;
         public event Action<MontageTrackElement, float> OnPasteBlockAtTime;
         public event Action<MontageTrackElement> OnTrackCopied;
@@ -104,7 +108,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _trackIndex = trackIndex;
             _clipLength = Mathf.Max(0.001f, clipLength);
             _frameRate = Mathf.Max(1f, frameRate);
-            _zoomLevel = Mathf.Clamp(zoomLevel, 0.1f, 20f);
+            _zoomLevel = Mathf.Clamp(zoomLevel, 0.005f, 20f);
             _actionTypes = actionTypes ?? Array.Empty<Type>();
             _actionTypeNames = actionTypeNames ?? Array.Empty<string>();
 
@@ -183,8 +187,10 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         /// <summary>
         /// 重建当前轨道内的所有 ActionBlock 视图。
+        /// 可选传入当前选中的动作块数据，重建后自动恢复其选中高亮。
         /// </summary>
-        public void RebuildBlocks()
+        /// <param name="selectedData">当前选中的动作块数据（可选）</param>
+        public void RebuildBlocks(MontageActionBlockData selectedData = null)
         {
             _contentElement.Clear();
             _blockElements.Clear();
@@ -205,12 +211,40 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                     i,
                     _clipLength,
                     _frameRate,
-                    _zoomLevel);
+                    _zoomLevel,
+                    _targetAsset);
+
+                if (selectedData != null && blockData == selectedData)
+                {
+                    blockElement.SetSelected(true);
+                }
+
+                _blockElements.Add(blockElement);
+                _contentElement.Add(blockElement);
 
                 blockElement.OnBlockSelected += block => OnBlockSelected?.Invoke(block);
+                blockElement.OnBlockClicked += block => OnBlockClicked?.Invoke(block);
+                blockElement.OnBlockMoving += block => OnBlockMoving?.Invoke(block);
+                blockElement.OnBlockDraggingGlobalSync += (block, time) => OnBlockDraggingGlobalSync?.Invoke(block, time);
                 blockElement.OnBlockCopied += block =>
                 {
                     MontageClipboard.CopyActionBlock(block.Data);
+                };
+                blockElement.OnBlockDuplicated += block =>
+                {
+                    if (!_trackData.IsLocked && block.Data != null)
+                    {
+                        var cloned = block.Data.Clone();
+                        int frameLen = Mathf.Max(1, block.Data.EndFrame - block.Data.StartFrame);
+                        cloned.StartFrame = block.Data.EndFrame;
+                        cloned.EndFrame = cloned.StartFrame + frameLen;
+                        float frameInterval = 1f / Mathf.Max(1f, _frameRate);
+                        cloned.StartTime = cloned.StartFrame * frameInterval;
+                        cloned.EndTime = cloned.EndFrame * frameInterval;
+                        _trackData.ActionBlocks.Add(cloned);
+                        RebuildBlocks();
+                        OnDataModified?.Invoke();
+                    }
                 };
                 blockElement.OnBlockDeleted += block =>
                 {
@@ -225,11 +259,20 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 {
                     OnDataModified?.Invoke();
                 };
-
-                _blockElements.Add(blockElement);
-                _contentElement.Add(blockElement);
             }
 
+            _contentElement.MarkDirtyRepaint();
+        }
+
+        /// <summary>
+        /// 仅轻量刷新当前轨道内所有动作块的外观定位、名称与角标，不销毁重建 DOM，绝对不丢失选中状态。
+        /// </summary>
+        public void UpdateBlocksVisual()
+        {
+            for (int i = 0; i < _blockElements.Count; i++)
+            {
+                _blockElements[i]?.UpdateVisual();
+            }
             _contentElement.MarkDirtyRepaint();
         }
 
@@ -238,7 +281,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         /// </summary>
         public void SetZoom(float zoomLevel)
         {
-            _zoomLevel = Mathf.Clamp(zoomLevel, 0.1f, 20f);
+            _zoomLevel = Mathf.Clamp(zoomLevel, 0.005f, 20f);
             _contentElement.style.width = ContentPixelWidth;
 
             for (int i = 0; i < _blockElements.Count; i++)
@@ -267,17 +310,18 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         }
 
         /// <summary>
-        /// 更新时间与帧率配置。
+        /// 更新时间与帧率配置及播放头时间。
         /// </summary>
-        public void UpdateTimelineConfig(float clipLength, float frameRate)
+        public void UpdateTimelineConfig(float clipLength, float frameRate, float contentDuration = -1f, float playheadTime = -1f)
         {
             _clipLength = Mathf.Max(0.001f, clipLength);
             _frameRate = Mathf.Max(1f, frameRate);
+            _contentDuration = contentDuration >= 0f ? contentDuration : (_targetAsset != null ? _targetAsset.TotalDuration : _clipLength);
             _contentElement.style.width = ContentPixelWidth;
 
             for (int i = 0; i < _blockElements.Count; i++)
             {
-                _blockElements[i].UpdateVisual();
+                _blockElements[i].UpdateTimelineConfig(_clipLength, _frameRate, playheadTime);
             }
 
             _contentElement.MarkDirtyRepaint();
@@ -303,20 +347,21 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             // 1. 绘制垂直贯穿时间轴刻度网格线 (Timeline Vertical Grid Lines)
             int totalFrames = Mathf.Max(1, Mathf.RoundToInt(_clipLength * _frameRate));
             float frameWidth = pps / _frameRate;
-            var (majorInterval, mediumInterval) = MontageTimelineRuler.CalculateTickIntervals(frameWidth);
+            var (majorInterval, mediumInterval) = MontageTimelineRuler.CalculateTickIntervals(frameWidth, _frameRate);
 
             Color majorGridColor = new Color(1f, 1f, 1f, 0.09f);
             Color minorGridColor = new Color(1f, 1f, 1f, 0.04f);
 
-            for (int f = 0; f <= totalFrames; f++)
+            bool drawMinor = frameWidth >= 5f;
+            bool drawMedium = (mediumInterval * frameWidth) >= 6f;
+            int step = drawMinor ? 1 : (drawMedium ? mediumInterval : majorInterval);
+
+            for (int f = 0; f <= totalFrames; f += step)
             {
                 bool isMajor = (f % majorInterval == 0);
-                bool isMedium = (!isMajor && f % mediumInterval == 0);
+                bool isMedium = (!isMajor && mediumInterval > 0 && f % mediumInterval == 0);
 
-                if (!isMajor && !isMedium)
-                {
-                    if (frameWidth < 5f) continue; // 过密时略过微小副刻度线
-                }
+                if (!isMajor && !isMedium && !drawMinor) continue;
 
                 float x = f * frameWidth;
                 painter.strokeColor = isMajor ? majorGridColor : minorGridColor;
@@ -345,7 +390,20 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 }
             }
 
-            // 3. 绘制底部分割线
+            // 3. 绘制内容结束指示虚线 (Content End Boundary Line)
+            float contentEnd = _contentDuration > 0.001f ? _contentDuration : (_targetAsset != null ? _targetAsset.TotalDuration : 0f);
+            if (contentEnd > 0.001f && contentEnd <= _clipLength)
+            {
+                float xEnd = contentEnd * pps;
+                painter.strokeColor = new Color(0.35f, 0.65f, 1.0f, 0.65f);
+                painter.lineWidth = 1.5f;
+                painter.BeginPath();
+                painter.MoveTo(new Vector2(xEnd, 0));
+                painter.LineTo(new Vector2(xEnd, height));
+                painter.Stroke();
+            }
+
+            // 4. 绘制底部分割线
             painter.strokeColor = new Color(0f, 0f, 0f, 0.35f);
             painter.lineWidth = 1f;
             painter.BeginPath();
@@ -489,40 +547,47 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         {
             var menu = new GenericMenu();
 
-            // 1. 复制轨道
+            // 1. 高频轨道组织操作置顶
+            menu.AddItem(new GUIContent("Duplicate Track (Ctrl+D)"), false, () => OnDuplicateTrackRequested?.Invoke(this));
+            menu.AddItem(new GUIContent("Delete Track (Delete)"), false, () => OnTrackDeleteRequested?.Invoke(this));
+
+            menu.AddSeparator("");
+
+            // 2. 剪贴板安全操作
             menu.AddItem(new GUIContent("Copy Track (Ctrl+C)"), false, () =>
             {
                 MontageClipboard.CopyTrack(_trackData);
                 OnTrackCopied?.Invoke(this);
             });
 
-            // 2. 粘贴覆盖
+            if (MontageClipboard.HasCopiedTrack)
+            {
+                menu.AddItem(new GUIContent("Paste as Track Below"), false, () => OnPasteNewTrackBelowRequested?.Invoke(this));
+            }
+            else
+            {
+                menu.AddDisabledItem(new GUIContent("Paste as Track Below"));
+            }
+
+            menu.AddSeparator("");
+
+            // 3. 高危破坏性覆盖（隔离到底部，并增加二次确认弹窗）
             if (MontageClipboard.HasCopiedTrack && !_trackData.IsLocked)
             {
-                menu.AddItem(new GUIContent("Paste Track (Overwrite)"), false, () => OnTrackPasteOverrideRequested?.Invoke(this));
+                menu.AddItem(new GUIContent("Paste Track (Overwrite)"), false, () =>
+                {
+                    if (EditorUtility.DisplayDialog("Paste Track (Overwrite)", 
+                        $"Are you sure you want to overwrite all action blocks in '{_trackData.TrackName}'? This action cannot be undone.", 
+                        "Overwrite", "Cancel"))
+                    {
+                        OnTrackPasteOverrideRequested?.Invoke(this);
+                    }
+                });
             }
             else
             {
                 menu.AddDisabledItem(new GUIContent("Paste Track (Overwrite)"));
             }
-
-            // 3. 粘贴为新轨道
-            if (MontageClipboard.HasCopiedTrack)
-            {
-                menu.AddItem(new GUIContent("Paste as New Track Below (Ctrl+V)"), false, () => OnPasteNewTrackBelowRequested?.Invoke(this));
-            }
-            else
-            {
-                menu.AddDisabledItem(new GUIContent("Paste as New Track Below (Ctrl+V)"));
-            }
-
-            // 4. 快速克隆
-            menu.AddItem(new GUIContent("Duplicate Track (Ctrl+D)"), false, () => OnDuplicateTrackRequested?.Invoke(this));
-
-            menu.AddSeparator("");
-
-            // 5. 删除轨道
-            menu.AddItem(new GUIContent("Delete Track (Delete)"), false, () => OnTrackDeleteRequested?.Invoke(this));
 
             menu.ShowAsContext();
         }
@@ -536,7 +601,22 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
             var menu = new GenericMenu();
 
-            // 1. 添加动作块 (子菜单)
+            // 1. 高频粘贴操作置顶，精简文案
+            if (MontageClipboard.HasCopiedBlock)
+            {
+                menu.AddItem(new GUIContent("Paste (Ctrl+V)"), false, () =>
+                {
+                    OnPasteBlockAtTime?.Invoke(this, timeAtClick);
+                });
+            }
+            else
+            {
+                menu.AddDisabledItem(new GUIContent("Paste (Ctrl+V)"));
+            }
+
+            menu.AddSeparator("");
+
+            // 2. 添加动作块类型子菜单
             for (int i = 0; i < _actionTypes.Length; i++)
             {
                 var type = _actionTypes[i];
@@ -549,17 +629,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
             menu.AddSeparator("");
 
-            // 2. 粘贴动作块
-            if (MontageClipboard.HasCopiedBlock)
+            // 3. 轨道级快捷操作
+            menu.AddItem(new GUIContent("Add New Track Below"), false, () => OnInsertTrackBelowRequested?.Invoke(this));
+            if (MontageClipboard.HasCopiedTrack)
             {
-                menu.AddItem(new GUIContent($"Paste Action Block at {timeAtClick:F2}s (Ctrl+V)"), false, () =>
-                {
-                    OnPasteBlockAtTime?.Invoke(this, timeAtClick);
-                });
-            }
-            else
-            {
-                menu.AddDisabledItem(new GUIContent("Paste Action Block (Ctrl+V)"));
+                menu.AddItem(new GUIContent("Paste as Track Below"), false, () => OnPasteNewTrackBelowRequested?.Invoke(this));
             }
 
             menu.ShowAsContext();
