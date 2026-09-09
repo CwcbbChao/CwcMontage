@@ -11,11 +11,40 @@ namespace Cwcbb.Tools.CwcMontage.Demo.Editor
     /// </summary>
     public static class MontageDemoVFXGenerator
     {
-        #region 常量定义
+        #region 动态路径解析
 
-        private const string BASE_DEMO_DIR = "Assets/CwcPlugins/CwcMontage/Demo";
-        private const string PREFAB_DIR = "Assets/CwcPlugins/CwcMontage/Demo/Prefabs";
-        private const string MAT_DIR = "Assets/CwcPlugins/CwcMontage/Demo/Materials";
+        private static string _cachedBaseDemoDir;
+
+        private static string BaseDemoDir
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(_cachedBaseDemoDir))
+                {
+                    _cachedBaseDemoDir = ResolveDemoRootDir();
+                }
+                return _cachedBaseDemoDir;
+            }
+        }
+
+        private static string PrefabDir => $"{BaseDemoDir}/Prefabs";
+        private static string MatDir => $"{BaseDemoDir}/Materials";
+
+        private static string ResolveDemoRootDir()
+        {
+            string[] guids = AssetDatabase.FindAssets("MontageDemoVFXGenerator t:MonoScript");
+            if (guids.Length > 0)
+            {
+                string scriptPath = AssetDatabase.GUIDToAssetPath(guids[0]);
+                string editorDir = Path.GetDirectoryName(scriptPath)?.Replace('\\', '/');
+                string demoDir = Path.GetDirectoryName(editorDir)?.Replace('\\', '/');
+                if (!string.IsNullOrEmpty(demoDir))
+                {
+                    return demoDir;
+                }
+            }
+            return "Assets/CwcPlugins/CwcMontage/Demo";
+        }
 
         #endregion
 
@@ -31,7 +60,7 @@ namespace Cwcbb.Tools.CwcMontage.Demo.Editor
         private static void AutoCheckAndGenerate()
         {
             // 检查关键 Prefab 是否已存在，若不存在则首次自动静默生成
-            string checkFile = $"{PREFAB_DIR}/VFX_HitSparks.prefab";
+            string checkFile = $"{PrefabDir}/VFX_HitSparks.prefab";
             if (!File.Exists(checkFile))
             {
                 EditorApplication.delayCall += () => GenerateAll(false);
@@ -61,7 +90,7 @@ namespace Cwcbb.Tools.CwcMontage.Demo.Editor
 
             if (logFeedback)
             {
-                Debug.Log($"<color=#44ff88>[CwcMontage] 演示特效与武器 Prefab 已成功生成至：{PREFAB_DIR}</color>");
+                Debug.Log($"<color=#44ff88>[CwcMontage] 演示特效与武器 Prefab 已成功生成至：{PrefabDir}</color>");
             }
         }
 
@@ -71,18 +100,19 @@ namespace Cwcbb.Tools.CwcMontage.Demo.Editor
 
         private static void EnsureDirectories()
         {
-            if (!AssetDatabase.IsValidFolder(BASE_DEMO_DIR))
+            if (!Directory.Exists(BaseDemoDir))
             {
-                AssetDatabase.CreateFolder("Assets/CwcPlugins/CwcMontage", "Demo");
+                Directory.CreateDirectory(BaseDemoDir);
             }
-            if (!AssetDatabase.IsValidFolder(PREFAB_DIR))
+            if (!Directory.Exists(PrefabDir))
             {
-                AssetDatabase.CreateFolder(BASE_DEMO_DIR, "Prefabs");
+                Directory.CreateDirectory(PrefabDir);
             }
-            if (!AssetDatabase.IsValidFolder(MAT_DIR))
+            if (!Directory.Exists(MatDir))
             {
-                AssetDatabase.CreateFolder(BASE_DEMO_DIR, "Materials");
+                Directory.CreateDirectory(MatDir);
             }
+            AssetDatabase.Refresh();
         }
 
         private static (Material additive, Material alpha, Material sword) EnsureMaterials()
@@ -96,7 +126,7 @@ namespace Cwcbb.Tools.CwcMontage.Demo.Editor
                                ?? Shader.Find("Standard");
 
             // 1. 发光叠加材质 (Additive)
-            string addPath = $"{MAT_DIR}/Mat_Demo_VFX_Additive.mat";
+            string addPath = $"{MatDir}/Mat_Demo_VFX_Additive.mat";
             var matAdd = AssetDatabase.LoadAssetAtPath<Material>(addPath);
             if (matAdd == null)
             {
@@ -106,7 +136,7 @@ namespace Cwcbb.Tools.CwcMontage.Demo.Editor
             }
 
             // 2. 半透明烟雾材质 (AlphaBlended)
-            string alphaPath = $"{MAT_DIR}/Mat_Demo_VFX_AlphaBlended.mat";
+            string alphaPath = $"{MatDir}/Mat_Demo_VFX_AlphaBlended.mat";
             var matAlpha = AssetDatabase.LoadAssetAtPath<Material>(alphaPath);
             if (matAlpha == null)
             {
@@ -116,7 +146,7 @@ namespace Cwcbb.Tools.CwcMontage.Demo.Editor
             }
 
             // 3. 长剑金属材质 (Sword)
-            string swordPath = $"{MAT_DIR}/Mat_Demo_Prop_Sword.mat";
+            string swordPath = $"{MatDir}/Mat_Demo_Prop_Sword.mat";
             var matSword = AssetDatabase.LoadAssetAtPath<Material>(swordPath);
             if (matSword == null)
             {
@@ -152,7 +182,7 @@ namespace Cwcbb.Tools.CwcMontage.Demo.Editor
 
         private static void CreateHitSparksPrefab(Material mat)
         {
-            string path = $"{PREFAB_DIR}/VFX_HitSparks.prefab";
+            string path = $"{PrefabDir}/VFX_HitSparks.prefab";
             var go = new GameObject("VFX_HitSparks");
             var ps = go.AddComponent<ParticleSystem>();
             var renderer = go.GetComponent<ParticleSystemRenderer>();
@@ -206,7 +236,7 @@ namespace Cwcbb.Tools.CwcMontage.Demo.Editor
 
         private static void CreateSlashArcPrefab(Material mat)
         {
-            string path = $"{PREFAB_DIR}/VFX_SlashArc.prefab";
+            string path = $"{PrefabDir}/VFX_SlashArc.prefab";
             var go = new GameObject("VFX_SlashArc");
             var ps = go.AddComponent<ParticleSystem>();
             var renderer = go.GetComponent<ParticleSystemRenderer>();
@@ -260,7 +290,7 @@ namespace Cwcbb.Tools.CwcMontage.Demo.Editor
 
         private static void CreateDustPuffPrefab(Material mat)
         {
-            string path = $"{PREFAB_DIR}/VFX_DustPuff.prefab";
+            string path = $"{PrefabDir}/VFX_DustPuff.prefab";
             var go = new GameObject("VFX_DustPuff");
             var ps = go.AddComponent<ParticleSystem>();
             var renderer = go.GetComponent<ParticleSystemRenderer>();
@@ -310,7 +340,7 @@ namespace Cwcbb.Tools.CwcMontage.Demo.Editor
 
         private static void CreatePunchImpactPrefab(Material mat)
         {
-            string path = $"{PREFAB_DIR}/VFX_PunchImpact.prefab";
+            string path = $"{PrefabDir}/VFX_PunchImpact.prefab";
             var go = new GameObject("VFX_PunchImpact");
             var ps = go.AddComponent<ParticleSystem>();
             var renderer = go.GetComponent<ParticleSystemRenderer>();
@@ -361,7 +391,7 @@ namespace Cwcbb.Tools.CwcMontage.Demo.Editor
 
         private static void CreateSwordPropPrefab(Material mat)
         {
-            string path = $"{PREFAB_DIR}/Prop_Sword.prefab";
+            string path = $"{PrefabDir}/Prop_Sword.prefab";
             var root = new GameObject("Prop_Sword");
 
             // 1. 剑身 (Blade)
