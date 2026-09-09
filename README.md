@@ -131,14 +131,15 @@ public class HitStopActionBlock : MontageActionBlockBase
 ## 演示场景与 Samples
 
 本插件包含开箱即用的完整战斗动作演示工程：
-- **场景路径**：`Demo/Scenes/MontageDemoScene.unity`。
+- **导入方式**：在 Unity `Package Manager` 中选中 `CwcMontage`，展开右侧 **Samples**，点击 **Import** 即可导入到项目中。
+- **场景路径**：`Assets/Samples/CwcMontage - Playables Animation Montage System/1.0.0/Montage Demo/Scenes/MontageDemoScene.unity`。
 - **操作方式**：
   - **1 - 9**：切换播放各类招式（三连斩、翻滚、连拳等）。
   - **Space**：暂停 / 恢复当前播放。
   - **Tab**：强制跳转至下一个物理分段。
   - **Q / E / R**：慢放 (0.5x) / 正常 (1.0x) / 加速 (1.5x)。
   - 界面左上角配备实时 Playables 监控面板，可观察混音槽权重与分段进度。
-- **安全删除**：生产部署时可安全删除 `Demo` 目录，核心 `Runtime` 与 `Editor` 模块零外部依赖。
+- **完全解耦**：演示模块完全自包含，核心 `Runtime` 与 `Editor` 模块零反向依赖。
 
 ---
 

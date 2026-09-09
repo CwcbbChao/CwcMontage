@@ -24,7 +24,7 @@
     {
       "displayName": "Montage Demo",
       "description": "Interactive combat showcase with humanoid animations, audio, VFX, and realtime monitor HUD.",
-      "path": "Demo"
+      "path": "Samples~/Demo"
     }
   ],
   "dependencies": {}
