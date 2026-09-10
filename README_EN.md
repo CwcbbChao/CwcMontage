@@ -1,7 +1,7 @@
 # CwcMontage - High-Performance Playables Animation Montage System
 
 [![Unity 2021.3+](https://img.shields.io/badge/Unity-2021.3%2B-blue.svg)](https://unity.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Custom%20(Free%20for%20Games)-blue.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/CwcbbChao/CwcMontage/pulls)
 [![Docs](https://img.shields.io/badge/Documentation-Online-brightgreen.svg)](https://cwcbbchao.github.io/CwcMontage/)
 
@@ -145,6 +145,8 @@ A complete combat demonstration scene is provided:
 
 ## License & Third-Party Notices
 
-- The core source code is released under the [MIT License](LICENSE).
+- The core source code is released under the [Cwc Tools Public License (Source-Available)](LICENSE):
+  - **End Products (Commercial & Free Games)**: Free to integrate, compile, and distribute within interactive games and applications without royalty fees.
+  - **Tool Redistribution Restrictions**: You may not redistribute, resell, or sublicense the Software as a standalone development tool, plugin, SDK, or asset pack.
 - Demo 3D humanoid character models and animations are provided by [Quaternius](https://quaternius.com) under the **CC0 1.0 Universal (Public Domain Dedication)** license.
 - Detailed third-party notices can be found in [Third-Party Notices.txt](Third-Party%20Notices.txt).

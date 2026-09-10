@@ -1,7 +1,7 @@
 # CwcMontage - 高性能纯表现层动作蒙太奇系统
 
 [![Unity 2021.3+](https://img.shields.io/badge/Unity-2021.3%2B-blue.svg)](https://unity.com/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-Custom%20(Free%20for%20Games)-blue.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/CwcbbChao/CwcMontage/pulls)
 [![Docs](https://img.shields.io/badge/Documentation-Online-brightgreen.svg)](https://cwcbbchao.github.io/CwcMontage/)
 
@@ -156,8 +156,10 @@ public class HitStopActionBlock : MontageActionBlockBase
 
 ---
 
-## 开源协议与第三方资产许可
+## 许可协议与第三方资产许可
 
-- 本项目核心源码采用 [MIT License](LICENSE) 开源许可。
+- 本项目核心源码采用 [Cwc Tools Public License (Source-Available)](LICENSE) 许可：
+  - **游戏作品发布（End Products）**：允许个人及商业游戏项目免费集成使用并发布商用，免版税（Royalty-Free）。
+  - **二次分发限制（No Redistribution as Tools）**：严禁以任何形式将本插件本体或修改版本作为独立开发工具、SDK、资产包或竞品插件进行二次分发、公开镜像或转售。
 - 内置演示角色模型与动画源自 [Quaternius](https://quaternius.com) 的 Universal Animation Library，遵循 **CC0 1.0 Universal (Public Domain Dedication)** 协议，允许无限制商业使用与二次分发。
 - 完整第三方声明详见 [Third-Party Notices.txt](Third-Party%20Notices.txt)。

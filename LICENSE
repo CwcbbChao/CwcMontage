@@ -1,21 +1,33 @@
-MIT License
+CWC TOOLS PUBLIC LICENSE (SOURCE-AVAILABLE, FREE FOR END PRODUCTS)
+Version 1.0
 
-Copyright (c) 2026 Cwcbb
+Copyright (c) 2026 Cwcbb. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+1. DEFINITIONS
+- "Software" refers to the specific software package, tool, plugin, source code, editor scripts, shaders, documentation, and associated digital assets provided under this License.
+- "Licensor" refers to the copyright holder named above.
+- "Licensee" (or "You") refers to any individual or legal entity exercising permissions granted by this License.
+- "End Product" refers to an executable, compiled, or packaged interactive digital application (including but not limited to video games, interactive simulations, and multimedia productions) where the Software is integrated into the binary or built bundle such that the raw source code and original asset files are not accessible or extractable by end users in normal operation.
+- "Development Tool" refers to any software development kit (SDK), game engine package, plugin, editor extension, script template, or digital asset library primarily intended for use by software developers or content creators during creation.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+2. GRANT OF LICENSE
+Subject to the terms of this License, the Licensor hereby grants You a worldwide, royalty-free, non-exclusive, non-transferable, and perpetual right to:
+(a) Download, view, study, and integrate the Software into any number of projects;
+(b) Modify, adapt, and customize the Software solely for the purpose of integration, bug fixing, or feature extension within Your own internal projects;
+(c) Distribute, publish, monetize, and commercially exploit End Products that incorporate the Software (or modified versions thereof), without paying any royalties or licensing fees to the Licensor.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+3. RESTRICTIONS
+You expressly agree NOT to:
+(a) Distribute, redistribute, sublicense, sell, resell, lease, rent, or host the Software (in whole or in part, modified or unmodified) as a standalone Development Tool, asset pack, or development resource;
+(b) Upload, publish, or share the Software (or derivatives thereof) to any public marketplace, store, or open registry (including, without limitation, the Unity Asset Store, Unreal Engine Marketplace, itch.io, GitHub, GitLab, or npm/OpenUPM) in a manner that allows third parties to use it as a Development Tool;
+(c) Incorporate the Software into any competing development library, middleware, or game engine addon distributed to third parties;
+(d) Remove, conceal, or alter any copyright notices, authorship attributions, or license text contained within the Software.
+
+4. PERMITTED REPOSITORIES
+Public distribution of the source code is restricted solely to the Licensor's official distribution channels. You may host copies or modifications of the Software only within private, internal repositories strictly accessible to members of Your project development team.
+
+5. TERMINATION
+Any breach of Section 3 of this License shall automatically and immediately terminate all rights granted hereunder. Upon termination, You must immediately cease all distribution and delete all copies of the Software in Your possession, excluding existing compiled copies of End Products already lawfully distributed prior to termination.
+
+6. DISCLAIMER OF WARRANTY & LIMITATION OF LIABILITY
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
