@@ -20,12 +20,6 @@
     "url": "https://github.com/CwcbbChao"
   },
   "license": "SEE LICENSE IN LICENSE",
-  "samples": [
-    {
-      "displayName": "Montage Demo",
-      "description": "Interactive combat showcase with humanoid animations, audio, VFX, and realtime monitor HUD.",
-      "path": "Samples~/Demo"
-    }
-  ],
+  "samples": [],
   "dependencies": {}
 }

@@ -130,16 +130,16 @@ public class HitStopActionBlock : MontageActionBlockBase
 
 ## Interactive Demo Scene
 
-A complete combat demonstration scene is provided:
-- **How to Import**: In Unity `Package Manager`, select `CwcMontage`, expand **Samples** on the right panel, and click **Import**.
-- **Scene Location**: `Assets/Samples/CwcMontage - Playables Animation Montage System/1.0.0/Montage Demo/Scenes/MontageDemoScene.unity`
+A complete combat demonstration scene is provided out of the box:
+- **Scene Location**: `Assets/CwcPlugins/CwcMontage/Demo/Scenes/MontageDemoScene.unity`
+- **Out of the Box**: Open the scene directly after importing the package—no extra unpacking required.
 - **Controls**:
   - **1 - 9**: Switch attack combos, rolls, and punches.
   - **Space**: Pause / resume playback.
   - **Tab**: Jump to next physical section immediately.
   - **Q / E / R**: Slow (0.5x) / Normal (1.0x) / Fast (1.5x) time scale.
   - Top-left HUD displays live PlayableGraph ping-pong slot weights and section progress.
-- **Full Decoupling**: The demo module is entirely self-contained with zero reverse dependencies on `Runtime` or `Editor`.
+- **Full Decoupling**: The demo module is entirely self-contained with its own `.asmdef` assembly and zero reverse dependencies on `Runtime` or `Editor`.
 
 ---
 
