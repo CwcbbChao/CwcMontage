@@ -280,6 +280,16 @@ namespace Cwcbb.Tools.CwcMontage
             return _audioClip;
         }
 
+        /// <summary>
+        /// 针对 Unity 6 / Fast Enter Play Mode 重置编辑器静态预览委托。
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticEventsOnEnterPlayMode()
+        {
+            PreviewAudioPlayHandler = null;
+            PreviewAudioStopHandler = null;
+        }
+
         #endregion
     }
 }

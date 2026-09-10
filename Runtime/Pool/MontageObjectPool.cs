@@ -325,6 +325,21 @@ namespace Cwcbb.Tools.CwcMontage
 
         #region 私有方法 (场景事件监听与生命周期挂钩)
 
+        /// <summary>
+        /// 针对 Unity 6 / Fast Enter Play Mode（禁用域重载）的标准生命周期重置。
+        /// 在进入播放模式时彻底清空静态缓存与场景状态，杜绝跨会话状态残留。
+        /// </summary>
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+        private static void ResetStaticFieldsOnEnterPlayMode()
+        {
+            _runtimeRoot = null;
+            _isSceneEventSubscribed = false;
+            _runtimePrefabPools.Clear();
+            _instanceToPrefabMap.Clear();
+            _prefabInitialScaleMap.Clear();
+            _audioSourcePool.Clear();
+        }
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
         private static void InitializeSceneEvents()
         {
