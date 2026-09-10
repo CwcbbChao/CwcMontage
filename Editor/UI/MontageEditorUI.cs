@@ -855,8 +855,48 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 }
             }
 
-            // 3. 插件专属默认内置模型 (直接通过固定 GUID 加载)
-            return AssetDatabase.LoadAssetAtPath<GameObject>(AssetDatabase.GUIDToAssetPath(DEFAULT_DUMMY_MODEL_GUID));
+            // 3. 插件专属默认内置模型 (优先通过固定 GUID 解析)
+            string defaultPath = AssetDatabase.GUIDToAssetPath(DEFAULT_DUMMY_MODEL_GUID);
+            if (!string.IsNullOrEmpty(defaultPath))
+            {
+                var defaultModel = AssetDatabase.LoadAssetAtPath<GameObject>(defaultPath);
+                if (defaultModel != null)
+                {
+                    return defaultModel;
+                }
+            }
+
+            // 4. 动态文件名检索保底 (防止 GUID 变动或环境解析延迟)
+            string[] foundGuids = AssetDatabase.FindAssets("UAL1_Standard t:Model");
+            if (foundGuids.Length == 0)
+            {
+                foundGuids = AssetDatabase.FindAssets("UAL1_Standard t:GameObject");
+            }
+            if (foundGuids.Length > 0)
+            {
+                string fallbackPath = AssetDatabase.GUIDToAssetPath(foundGuids[0]);
+                var fallbackModel = AssetDatabase.LoadAssetAtPath<GameObject>(fallbackPath);
+                if (fallbackModel != null)
+                {
+                    EditorPrefs.SetString(PREVIEW_MODEL_PREFS_KEY, foundGuids[0]);
+                    return fallbackModel;
+                }
+            }
+
+            // 5. 路径保底：尝试直接从插件 Demo 相对路径加载
+            const string relativePath = "Assets/CwcPlugins/CwcMontage/Demo/Models/Universal Animation Library[Standard]/Unity/UAL1_Standard.fbx";
+            var relativeModel = AssetDatabase.LoadAssetAtPath<GameObject>(relativePath);
+            if (relativeModel != null)
+            {
+                string guid = AssetDatabase.AssetPathToGUID(relativePath);
+                if (!string.IsNullOrEmpty(guid))
+                {
+                    EditorPrefs.SetString(PREVIEW_MODEL_PREFS_KEY, guid);
+                }
+                return relativeModel;
+            }
+
+            return null;
         }
 
         private void OnViewportModelChanged(GameObject newModel)
