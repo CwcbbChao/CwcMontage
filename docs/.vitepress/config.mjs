@@ -71,7 +71,7 @@ export default defineConfig({
     },
 
     footer: {
-      message: 'Released under the MIT License.',
+      message: 'Released under Cwc Tools Public License (Free for End Products).',
       copyright: 'Copyright © 2026 Cwcbb'
     },
 
