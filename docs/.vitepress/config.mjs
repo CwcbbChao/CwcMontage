@@ -16,7 +16,7 @@ export default defineConfig({
       { text: '指南', link: '/guide/getting-started' },
       { text: '核心架构', link: '/architecture/interval-sweep' },
       { text: 'API 参考', link: '/api/overview' },
-      { text: '路线图 & Pro', link: '/roadmap/' },
+      { text: '路线图', link: '/roadmap/' },
       { text: 'GitHub', link: 'https://github.com/CwcbbChao/CwcMontage' }
     ],
 
@@ -60,7 +60,7 @@ export default defineConfig({
         {
           text: '未来演进',
           items: [
-            { text: '路线图与 Pro 版展望', link: '/roadmap/' }
+            { text: '版本路线图与规划', link: '/roadmap/' }
           ]
         }
       ]

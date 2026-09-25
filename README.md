@@ -39,18 +39,29 @@
 1. **纯表现层与开闭原则 (OCP)**
    - 核心运行时完全解耦具体业务逻辑，零侵入硬编码。
    - 提供 `MontageActionBlockBase` 与 `MontageSpatialActionBlockBase`，开发者可自由扩展音效、特效、顿帧、相机震动或受击盒判定。
-2. **区间扫掠无漏帧算法 (Interval Sweep Sampling)**
+2. **多层级分层与叠加混音 (Multi-Track & Additive Pipeline - v1.1.0)**
+   - 原生支持**全身 (Full Body)**、**上半身 (Upper Body)**、**叠加 (Additive)** 三轨并行独立混音与权重控制。
+   - 满足边跑边打、移动施法，以及在大招或奔跑状态下复合受击抖动、开火后坐力等高品质战斗需求。
+3. **上半身腰部实时解耦旋转算法 (Spine Decoupled Root Rotation - v1.1.0)**
+   - 彻底攻克移动中上半身出招姿态被骨盆摇摆前倾污染的业界痛点。
+   - 告别传统方案对 DCC 专用腰部骨骼的破坏性魔改，底层借助轻量纯骨骼 Dummy 瞬态采样与四元数逆变换，现成通用 Humanoid 动作 100% 零修改即插即用。
+4. **编辑器底层移动循环模拟 (Locomotion & Controller Preview - v1.1.0)**
+   - 时间轴编辑器内置底层待机/奔跑循环模拟，无需运行游戏即可在 Scene 视口所见即所得调试移动出招手感与混合姿态。
+5. **片段独立平滑过渡与打断锁存 (Independent Clip Fade & Latched Stop - v1.1.0)**
+   - 片段级独立淡入淡出，相邻连续片段自动无缝平滑串联，彻底消除边缘权重塌陷；
+   - 任意时刻打断播放基于内部自洽时钟锁存插值，彻底消除生硬抽帧切回。
+6. **区间扫掠无漏帧算法 (Interval Sweep Sampling)**
    - 采用增量半开区间 `(LastTime, CurrentTime]` 判定，彻底杜绝在极端低帧率卡顿下跳帧漏事件的问题。
    - 保证所有动作块的 `OnEnter -> OnUpdate -> OnExit` 严格成对触发，原生支持倒放与瞬移 Seek。
-3. **去语义化物理分段 (Native Physical Sections)**
+7. **去语义化物理分段 (Native Physical Sections)**
    - 仅做客观时间切分，不预设前摇/后摇/击发点等硬编码业务语义。
    - 提供 $O(1)$ 零 GC 分段时长查询与范围检测。
-4. **分段自适应时钟缩放 (Adaptive Time Warping)**
+8. **分段自适应时钟缩放 (Adaptive Time Warping)**
    - 外部调用 `handle.SyncSectionDuration(sectionIndex, targetDuration)`，底层根据原始动作几何时长自适应换算并平滑驱动 Playable 播放速率，化解策划数值与动作美术资产的冲突。
-5. **固定双缓冲槽 CrossFade 混音拓扑 (Dual-Slot Ping-Pong Mixer)**
+9. **固定双缓冲槽 CrossFade 混音拓扑 (Dual-Slot Ping-Pong Mixer)**
    - 采用固定 2 槽双缓冲结构进行 CrossFade 平滑过渡，彻底淘汰动态断连与数组移位，PlayableGraph 终身稳定且零 GC。
-6. **Root Motion 委托化解耦分发**
-   - 掩码过滤水平/垂直/旋转分量后，通过 `IMontageRootMotionReceiver` 接口或事件抛出，不污染角色现有的物理移动控制器（如 CharacterController 或 KCC）。
+10. **Root Motion 委托化解耦分发**
+    - 掩码过滤水平/垂直/旋转分量后，通过 `IMontageRootMotionReceiver` 接口或事件抛出，不污染角色现有的物理移动控制器（如 CharacterController 或 KCC）。
 
 ---
 
@@ -152,7 +163,34 @@ public class HitStopActionBlock : MontageActionBlockBase
 | `MontageHandle` | `Cwcbb.Tools.CwcMontage` | 智能结构体句柄（带代际校验与悬挂检测，零 GC 驱动与查询） |
 | `MontagePlayer` | `Cwcbb.Tools.CwcMontage` | 纯 C# 运行时播放器，执行增量时间采样、时钟对齐与分段状态推进 |
 | `MontageCoordinator` | `Cwcbb.Tools.CwcMontage` | 挂载在角色上的 MonoBehaviour，管理 Playables 混音图与 Root Motion 广播 |
+| `MontageSpineDecoupleUtility` | `Cwcbb.Tools.CwcMontage` | 轻量纯骨骼 Dummy 瞬态采样与四元数逆变换工具，负责上半身腰部实时解耦旋转计算 |
 | `IMontageRootMotionReceiver` | `Cwcbb.Tools.CwcMontage` | 根运动接收者接口，解耦外部物理移动系统 |
+
+---
+
+## 版本演进与开发路线图 (Roadmap)
+
+`CwcMontage` 严格定位为**高品质纯表现层动作蒙太奇工具**，专注于将动画采样、分层混音、视听特效协同与时间轴编辑体验做到极致：
+
+- [x] **v1.0.0 (核心引擎建立)**
+  - Playables 混音图与双缓冲 Ping-Pong 拓扑结构
+  - 区间扫掠无漏帧算法（保证极端低帧率下事件成对触发）
+  - 去语义化物理分段与自适应时钟缩放 (Adaptive Time Warping)
+  - 交互式时间轴编辑器与 Scene 视口洗牌实时采样
+  - 委托化 Root Motion 分发
+- [x] **v1.1.0 (多层级与解耦混音重大升级 - 当前版本)**
+  - 多层级动画轨道：全身 (Full Body)、上半身 (Upper Body)、叠加 (Additive)
+  - 上半身腰部实时解耦旋转算法（四元数逆变换，告别 DCC 魔改，直接适配通用 Humanoid 动作）
+  - 编辑器底层移动（Locomotion）循环模拟预览
+  - 片段级独立平滑过渡（Crossfade）与打断权重自洽插值
+- [ ] **v1.2.0 (表现力与编辑交互增强 - 计划中)**
+  - 曲线参数驱动轨道 (Curve Parameter Track)：支持通过自定义 `AnimationCurve` 连续驱动材质 Shader Float、后处理 Exposure、音量渐变等
+  - 时间轴快捷多选与吸附对齐：框选多个 ActionBlock 整体拖动、吸附关键帧与批量缩放
+  - Unity 6 LTS (6000.x) 深度适配与 UI Toolkit 编辑器滚动性能调优
+- [ ] **未来优化方向 (Ongoing)**
+  - 多遮罩与精细骨骼过滤 (Custom AvatarMask) 拓展配置
+  - 音频波形 (Audio Waveform) 时间轴直观渲染展示
+  - 轻量标记点 (Event Markers / Tags) 系统
 
 ---
 

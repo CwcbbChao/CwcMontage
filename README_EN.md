@@ -39,18 +39,29 @@ Dual-slot ping-pong cross-fade mixer, adaptive time warping, and guaranteed pair
 1. **Pure Presentation Layer & Open-Closed Principle (OCP)**
    - The core runtime does not hardcode any gameplay or audio/VFX behaviors.
    - Extend `MontageActionBlockBase` or `MontageSpatialActionBlockBase` to create custom hitboxes, freeze frames, audio clips, particle spawners, or camera shakes.
-2. **Interval Sweep Sampling**
+2. **Multi-Track & Additive Pipeline (v1.1.0)**
+   - Native support for **Full Body**, **Upper Body**, and **Additive** concurrent tracks with independent mixer weights.
+   - Enables moving attacks, casting while running, and smoothly compounding hit flinches or firearm recoil over ongoing animations.
+3. **Real-time Spine Decoupled Root Rotation (v1.1.0)**
+   - Eliminates the industry pain point where upper-body casting is tilted by lower-body hip swaying/leaning.
+   - Requires zero DCC bone modifications. Utilizing a lightweight Dummy skeleton transient sampler and quaternion inverse transformations, any generic Humanoid asset works out of the box with 100% plug-and-play compatibility.
+4. **Editor Locomotion & Controller Preview (v1.1.0)**
+   - Built-in idle/run locomotion loop simulation directly inside the Timeline Editor, allowing WYSIWYG tuning of moving combat feel in the Scene View without entering Play mode.
+5. **Independent Clip Fade & Latched Stop (v1.1.0)**
+   - Clip-level independent crossfade that automatically bypasses edge fade for seamless continuous stitching;
+   - Interrupting playback latches internally computed self-consistent weights to guarantee smooth exit transitions without frame snapping.
+6. **Interval Sweep Sampling**
    - Employs incremental half-open intervals `(LastTime, CurrentTime]` to evaluate active spans, eliminating missed events during severe frame-rate drops.
    - Guarantees strict `OnEnter -> OnUpdate -> OnExit` lifecycle pairing with native support for scrubbing and seeking.
-3. **Native Geometric Physical Sections**
+7. **Native Geometric Physical Sections**
    - Objectively geometric timestamp slicing without arbitrary semantic coupling (e.g. startup / active / recovery).
    - $O(1)$ zero-allocation section duration queries and range testing.
-4. **Adaptive Time Warping**
+8. **Adaptive Time Warping**
    - Drive target section durations dynamically via `handle.SyncSectionDuration(sectionIndex, targetDuration)`. The engine automatically scales the Playable playback rate to harmonize animation visual assets with design timing.
-5. **Fixed Dual-Slot Ping-Pong Mixer Topology**
+9. **Fixed Dual-Slot Ping-Pong Mixer Topology**
    - Features a permanent 2-slot cross-fade mixer graph. Eliminates dynamic node reconnections and array shifting for lifelong PlayableGraph stability and zero runtime GC allocations.
-6. **Root Motion Delegation**
-   - Dispatches horizontal, vertical, and rotational delta components via `IMontageRootMotionReceiver` or C# events, avoiding intrusive dependencies on existing movement controllers (e.g., CharacterController, KCC).
+10. **Root Motion Delegation**
+    - Dispatches horizontal, vertical, and rotational delta components via `IMontageRootMotionReceiver` or C# events, avoiding intrusive dependencies on existing movement controllers (e.g., CharacterController, KCC).
 
 ---
 
@@ -140,6 +151,46 @@ A complete combat demonstration scene is provided out of the box:
   - **Q / E / R**: Slow (0.5x) / Normal (1.0x) / Fast (1.5x) time scale.
   - Top-left HUD displays live PlayableGraph ping-pong slot weights and section progress.
 - **Full Decoupling**: The demo module is entirely self-contained with its own `.asmdef` assembly and zero reverse dependencies on `Runtime` or `Editor`.
+
+---
+
+## Core Architecture & Roles
+
+| Class | Namespace | Responsibility |
+| :--- | :--- | :--- |
+| `MontageSequenceSO` | `Cwcbb.Tools.CwcMontage` | Montage configuration asset (ScriptableObject) holding animations, curves, physical sections, and track data |
+| `MontageActionBlockBase` | `Cwcbb.Tools.CwcMontage` | Abstract base class for custom visual/audio action blocks |
+| `MontageHandle` | `Cwcbb.Tools.CwcMontage` | Lightweight struct handle (with generation and dangling checks, zero GC driving and querying) |
+| `MontagePlayer` | `Cwcbb.Tools.CwcMontage` | Pure C# runtime player executing incremental sweep sampling, clock alignment, and section state stepping |
+| `MontageCoordinator` | `Cwcbb.Tools.CwcMontage` | MonoBehaviour on the character entity managing PlayableGraph mixer topology and Root Motion dispatching |
+| `MontageSpineDecoupleUtility` | `Cwcbb.Tools.CwcMontage` | Lightweight Dummy skeleton transient sampler and quaternion inverse utility for real-time spine root rotation decoupling |
+| `IMontageRootMotionReceiver` | `Cwcbb.Tools.CwcMontage` | Interface for receiving delegated Root Motion deltas without polluting external physics controllers |
+
+---
+
+## Evolution & Roadmap
+
+`CwcMontage` is strictly positioned as a **high-fidelity, pure presentation-layer action montage system**, focusing relentlessly on animation blending, audio/VFX synchronization, and timeline authoring:
+
+- [x] **v1.0.0 (Core Engine Foundations)**
+  - Playables mixer graph with dual-slot ping-pong crossfade topology
+  - Interval sweep sampling algorithm (ensuring strictly paired events even under severe frame drops)
+  - Geometric physical sections with Adaptive Time Warping
+  - Interactive Timeline Editor with real-time Scene view scrubbing
+  - Delegated Root Motion distribution
+- [x] **v1.1.0 (Multi-Track & Decoupled Blending - Current Version)**
+  - Multi-track animation pipeline: Full Body, Upper Body, and Additive layers
+  - Real-time Spine Decoupled Root Rotation algorithm (quaternion inverse math, zero DCC bone modifications, 100% plug-and-play for generic Humanoid assets)
+  - Built-in Editor Locomotion simulation and preview
+  - Independent clip-level crossfade and self-consistent latched exit weights
+- [ ] **v1.2.0 (Expressiveness & Authoring UX - Planned)**
+  - Curve Parameter Track: Continuously drive Shader float properties, post-processing exposures, and audio volume via custom `AnimationCurve`
+  - Timeline multi-selection and snapping: Box-select multiple action blocks, keyframe snapping, and batch proportional scaling
+  - Unity 6 LTS (6000.x) deep profiling and UI Toolkit timeline scroll optimization
+- [ ] **Ongoing Enhancements**
+  - Custom AvatarMask bone filtering configuration
+  - Audio waveform rendering directly inside audio track blocks
+  - Lightweight event marker and tag system
 
 ---
 
