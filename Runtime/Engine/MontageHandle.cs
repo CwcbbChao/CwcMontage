@@ -235,6 +235,18 @@ namespace Cwcbb.Tools.CwcMontage
         }
 
         /// <summary>
+        /// 动态设置当前蒙太奇的播放权重倍率 [0.0, 1.0]。
+        /// </summary>
+        /// <param name="weight">权重倍率 [0.0, 1.0]</param>
+        public void SetWeight(float weight)
+        {
+            if (_coordinator != null)
+            {
+                _coordinator.SetHandleWeight(_layerIndex, _slotIndex, _generation, weight);
+            }
+        }
+
+        /// <summary>
         /// 暂停或恢复播放。
         /// </summary>
         /// <param name="isPaused">是否暂停</param>

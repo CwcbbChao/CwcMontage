@@ -19,7 +19,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
             EditorGUILayout.Space(6);
             GUI.backgroundColor = new Color(0.2f, 0.5f, 0.85f);
-            if (GUILayout.Button("Open in Montage Editor (打开蒙太奇编辑器)", GUILayout.Height(34)))
+            if (GUILayout.Button("Open in Montage Editor", GUILayout.Height(34)))
             {
                 MontageEditorWindow.OpenAsset(targetSO);
             }

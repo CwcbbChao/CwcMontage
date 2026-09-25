@@ -28,6 +28,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         private const string PREVIEW_MODEL_PREFS_KEY = "CwcMontage_LastPreviewModelGuid";
         private const string USS_GUID = "1ac56d601272aa740b6f49bbcc195f4f";
         private const string DEFAULT_DUMMY_MODEL_GUID = "a0ee339482ca65344a511b7983d67fd8";
+        private const string PREVIEW_BASE_MOTION_PREFS_KEY = "CwcMontage_PreviewBaseMotionGuid";
 
         #endregion
 
@@ -41,13 +42,19 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         private MontageActionInspectorElement _inspector;
         private MontageTimelineRuler _ruler;
         private MontageSectionTrackElement _sectionTrackElement;
-        private MontageAnimationTrackElement _animationTrackElement;
+        private MontageAnimationTrackElement _upperBodyTrackElement;
+        private MontageAnimationTrackElement _fullBodyTrackElement;
+        private MontageAnimationTrackElement _additiveTrackElement;
+        private MontageAnimationSegment _selectedSegment;
+        private MontageAnimationTrackElement _selectedAnimationTrack;
+        private Button _layersDropdownBtn;
         private ScrollView _headersScrollView;
         private VisualElement _headersContentWrapper;
         private VisualElement _reorderIndicatorLine;
         private ScrollView _tracksScrollView;
         private VisualElement _tracksContentWrapper;
         private GameObject _currentPreviewPrefab;
+        private AnimationClip _currentPreviewBaseMotion;
 
         // 预览控制与播放状态
         private float _previewSpeed = 1.0f;
@@ -70,8 +77,14 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         // Playable & 动画状态
         private PlayableGraph _playableGraph;
-        private AnimationMixerPlayable _previewMixer;
-        private readonly List<AnimationClipPlayable> _previewSegmentPlayables = new();
+        private AnimationLayerMixerPlayable _topLevelPreviewMixer;
+        private AnimationClipPlayable _baseMotionPlayable;
+        private AnimationMixerPlayable _upperBodyMixer;
+        private AnimationMixerPlayable _fullBodyMixer;
+        private AnimationMixerPlayable _additiveMixer;
+        private readonly List<AnimationClipPlayable> _upperBodySegmentPlayables = new();
+        private readonly List<AnimationClipPlayable> _fullBodySegmentPlayables = new();
+        private readonly List<AnimationClipPlayable> _additiveSegmentPlayables = new();
         private readonly List<int> _tempEvalIndices = new();
         private readonly List<float> _tempEvalTimes = new();
         private readonly List<float> _tempEvalWeights = new();
@@ -148,11 +161,13 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         public void RenderViewportImmediate() => _viewport?.RenderImmediate();
 
         /// <summary>
-        /// 处理外部 ObjectPicker 选中的动画片段资源并添加到动画轨道。
+        /// 处理外部 ObjectPicker 选中的动画片段资源并添加到当前等待的动画轨道。
         /// </summary>
         public void HandleAnimationPickerResult(AnimationClip picked, bool isClosed = false)
         {
-            _animationTrackElement?.HandleObjectPickerResult(picked, isClosed);
+            _additiveTrackElement?.HandleObjectPickerResult(picked, isClosed);
+            _fullBodyTrackElement?.HandleObjectPickerResult(picked, isClosed);
+            _upperBodyTrackElement?.HandleObjectPickerResult(picked, isClosed);
         }
 
         public void Dispose()
@@ -198,6 +213,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _viewport = new MontagePreviewViewportElement();
             _viewport.style.flexGrow = 1;
             _viewport.OnPreviewModelChanged += OnViewportModelChanged;
+            _viewport.OnPreviewBaseMotionChanged += OnViewportBaseMotionChanged;
             _viewport.OnRootMotionToggled += OnPreviewRootMotionChanged;
             _viewport.OnFootIKToggled += OnPreviewFootIKChanged;
             _viewport.SetRootMotionState(_previewRootMotion);
@@ -226,8 +242,10 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 UpdateTimelineLengthsAndSync(fullRebuild: false, markDirty: false, rebuildRuntimeBlocks: true);
 
                 // 2. 动画轨道即时重构条块几何与相邻交叉混合对角线
-                _targetAsset.SortAnimationSegments();
-                _animationTrackElement?.RebuildSegments();
+                _targetAsset.SortAllChannelSegments();
+                _additiveTrackElement?.RebuildSegments();
+                _fullBodyTrackElement?.RebuildSegments();
+                _upperBodyTrackElement?.RebuildSegments();
 
                 // 3. 所有表现轨道条块外观与提示文本即时刷新（仅轻量更新外观，不销毁重建 DOM，保持选中状态）
                 for (int i = 0; i < _trackElements.Count; i++)
@@ -441,12 +459,30 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             headerTitle.style.color = new Color(0.85f, 0.85f, 0.85f);
             trackListHeader.Add(headerTitle);
 
+            var headerRightGroup = new VisualElement();
+            headerRightGroup.style.flexDirection = FlexDirection.Row;
+            headerRightGroup.style.alignItems = Align.Center;
+
+            // 统一的动画轨道层级管理下拉标签（支持多选开启/隐藏 UpperBody 与 Additive 通道）
+            _layersDropdownBtn = new Button(ShowChannelsMenu) { text = "Layers ▾" };
+            _layersDropdownBtn.AddToClassList("montage-toolbar-btn");
+            _layersDropdownBtn.style.paddingLeft = 6;
+            _layersDropdownBtn.style.paddingRight = 6;
+            _layersDropdownBtn.style.height = 20;
+            _layersDropdownBtn.style.fontSize = 11;
+            _layersDropdownBtn.tooltip = "Manage animation layer tracks (UpperBody, FullBody, Additive)";
+            headerRightGroup.Add(_layersDropdownBtn);
+
+            UpdateLayersDropdownVisual();
+
             var addTrackBtn = new Button(ShowAddTrackDropdownMenu) { text = "+ Track" };
             addTrackBtn.AddToClassList("montage-toolbar-btn");
             addTrackBtn.AddToClassList("montage-primary-btn");
-            addTrackBtn.tooltip = "Add or Paste an animation track";
-            trackListHeader.Add(addTrackBtn);
+            addTrackBtn.style.marginLeft = 4;
+            addTrackBtn.tooltip = "Add Action/Notify track";
+            headerRightGroup.Add(addTrackBtn);
 
+            trackListHeader.Add(headerRightGroup);
             leftHeaderColumn.Add(trackListHeader);
 
             _headersScrollView = new ScrollView(ScrollViewMode.Vertical);
@@ -503,22 +539,33 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _sectionTrackElement.OnSplitMoved += MoveSplitTimestamp;
             _sectionTrackElement.OnSplitRemoved += RemoveSplitTimestamp;
 
-            // 独立单条核心动画轨道组件
-            _animationTrackElement = new MontageAnimationTrackElement(
+            // 独立三大确定人形通道动画轨道组件
+            _additiveTrackElement = new MontageAnimationTrackElement(
                 _targetAsset,
                 _clipLength,
                 _frameRate,
-                _zoomLevel
+                _zoomLevel,
+                MontageLayerChannel.Additive
             );
-            _animationTrackElement.OnSegmentSelected += (seg, idx) =>
-            {
-                _selectedBlock?.SetSelected(false);
-                _selectedBlock = null;
-                _selectedBlockData = null;
-                _inspector.InspectAnimationSegment(seg, idx, _targetAsset);
-            };
-            _animationTrackElement.OnDataModified += HandleAnimationTrackModified;
-            _animationTrackElement.OnRequestScrubTime += ScrubToTime;
+            BindAnimationTrackCallbacks(_additiveTrackElement);
+
+            _fullBodyTrackElement = new MontageAnimationTrackElement(
+                _targetAsset,
+                _clipLength,
+                _frameRate,
+                _zoomLevel,
+                MontageLayerChannel.FullBody
+            );
+            BindAnimationTrackCallbacks(_fullBodyTrackElement);
+
+            _upperBodyTrackElement = new MontageAnimationTrackElement(
+                _targetAsset,
+                _clipLength,
+                _frameRate,
+                _zoomLevel,
+                MontageLayerChannel.UpperBody
+            );
+            BindAnimationTrackCallbacks(_upperBodyTrackElement);
 
             // 轨道内容区域
             _tracksScrollView = new ScrollView(ScrollViewMode.VerticalAndHorizontal);
@@ -556,9 +603,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         {
             CleanupPlayablesAndPreview();
 
-            // 智能解析预览模型预设 (用户指定 -> EditorPrefs 记忆 -> 自动查找项目中可用测试人偶)
+            // 智能解析预览模型预设与底层基础动作 (用户指定 -> EditorPrefs 记忆 -> 插件内置保底资产)
             _currentPreviewPrefab = ResolvePreviewModel();
+            _currentPreviewBaseMotion = ResolvePreviewBaseMotion();
             _viewport.Initialize(_targetAsset, _currentPreviewPrefab, ref _previewObject);
+            _viewport.SetSelectedBaseMotion(_currentPreviewBaseMotion);
 
             _contentDuration = _targetAsset != null ? _targetAsset.TotalDuration : 0f;
             var (initTotalWidth, initClipLength) = CalculateTimelineDimensions();
@@ -573,7 +622,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 _tracksContentWrapper.style.width = initTotalWidth;
             }
 
-            if (_targetAsset == null || _targetAsset.AnimationSegments == null || _targetAsset.AnimationSegments.Count == 0)
+            if (_targetAsset == null)
             {
                 RebuildRuntimeActionBlocks(forceRecreate: true);
                 _viewport.RenderImmediate();
@@ -589,32 +638,99 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 _playableGraph = PlayableGraph.Create("CwcMontageEditorPreviewGraph");
                 _playableGraph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
 
-                var segments = _targetAsset.AnimationSegments;
-                int segCount = segments.Count;
+                // 固定四层拓扑结构：
+                // Input 0: Locomotion / Base Motion (底层循环待机/跑步等)
+                // Input 1: UpperBody (内置通用 Humanoid AvatarMask)
+                // Input 2: FullBody (霸权覆盖)
+                // Input 3: Additive (受击/叠加)
+                _topLevelPreviewMixer = AnimationLayerMixerPlayable.Create(_playableGraph, 4);
 
-                _previewMixer = AnimationMixerPlayable.Create(_playableGraph, segCount);
-                _previewSegmentPlayables.Clear();
-
-                for (int s = 0; s < segCount; s++)
+                // 0. Base Motion 通道设置 (Input 0)
+                if (_currentPreviewBaseMotion != null)
                 {
-                    var seg = segments[s];
-                    var cp = seg?.Clip != null
-                        ? AnimationClipPlayable.Create(_playableGraph, seg.Clip)
-                        : default;
+                    _baseMotionPlayable = AnimationClipPlayable.Create(_playableGraph, _currentPreviewBaseMotion);
+                    _baseMotionPlayable.SetApplyFootIK(_previewFootIK);
+                    _baseMotionPlayable.SetSpeed(1.0f);
+                    _topLevelPreviewMixer.ConnectInput(0, _baseMotionPlayable, 0);
+                    _topLevelPreviewMixer.SetInputWeight(0, 1.0f);
+                }
+                else
+                {
+                    _baseMotionPlayable = default;
+                    _topLevelPreviewMixer.SetInputWeight(0, 0.0f);
+                }
 
+                // 1. UpperBody 通道设置
+                var upperMask = MontageMaskUtility.GetOrCreateHumanoidUpperBodyMask();
+                _topLevelPreviewMixer.SetLayerMaskFromAvatarMask(1, upperMask);
+                _topLevelPreviewMixer.SetLayerAdditive(1, false);
+
+                var upperSegments = _targetAsset.UpperBodySegments;
+                int upperCount = upperSegments != null ? upperSegments.Count : 0;
+                _upperBodyMixer = AnimationMixerPlayable.Create(_playableGraph, Mathf.Max(1, upperCount));
+                _upperBodySegmentPlayables.Clear();
+                for (int s = 0; s < upperCount; s++)
+                {
+                    var seg = upperSegments[s];
+                    var cp = seg?.Clip != null ? AnimationClipPlayable.Create(_playableGraph, seg.Clip) : default;
                     if (cp.IsValid())
                     {
                         cp.SetApplyFootIK(_previewFootIK);
                         cp.SetSpeed(1.0f);
-                        _previewMixer.ConnectInput(s, cp, 0);
+                        _upperBodyMixer.ConnectInput(s, cp, 0);
                     }
-
-                    _previewMixer.SetInputWeight(s, s == 0 ? 1.0f : 0.0f);
-                    _previewSegmentPlayables.Add(cp);
+                    _upperBodyMixer.SetInputWeight(s, s == 0 ? 1.0f : 0.0f);
+                    _upperBodySegmentPlayables.Add(cp);
                 }
+                _topLevelPreviewMixer.ConnectInput(1, _upperBodyMixer, 0);
+                _topLevelPreviewMixer.SetInputWeight(1, 0.0f);
+
+                // 2. FullBody 通道设置
+                _topLevelPreviewMixer.SetLayerAdditive(2, false);
+                var fullSegments = _targetAsset.FullBodySegments;
+                int fullCount = fullSegments != null ? fullSegments.Count : 0;
+                _fullBodyMixer = AnimationMixerPlayable.Create(_playableGraph, Mathf.Max(1, fullCount));
+                _fullBodySegmentPlayables.Clear();
+                for (int s = 0; s < fullCount; s++)
+                {
+                    var seg = fullSegments[s];
+                    var cp = seg?.Clip != null ? AnimationClipPlayable.Create(_playableGraph, seg.Clip) : default;
+                    if (cp.IsValid())
+                    {
+                        cp.SetApplyFootIK(_previewFootIK);
+                        cp.SetSpeed(1.0f);
+                        _fullBodyMixer.ConnectInput(s, cp, 0);
+                    }
+                    _fullBodyMixer.SetInputWeight(s, s == 0 ? 1.0f : 0.0f);
+                    _fullBodySegmentPlayables.Add(cp);
+                }
+                _topLevelPreviewMixer.ConnectInput(2, _fullBodyMixer, 0);
+                _topLevelPreviewMixer.SetInputWeight(2, 0.0f);
+
+                // 3. Additive 通道设置
+                _topLevelPreviewMixer.SetLayerAdditive(3, true);
+                var addSegments = _targetAsset.AdditiveSegments;
+                int addCount = addSegments != null ? addSegments.Count : 0;
+                _additiveMixer = AnimationMixerPlayable.Create(_playableGraph, Mathf.Max(1, addCount));
+                _additiveSegmentPlayables.Clear();
+                for (int s = 0; s < addCount; s++)
+                {
+                    var seg = addSegments[s];
+                    var cp = seg?.Clip != null ? AnimationClipPlayable.Create(_playableGraph, seg.Clip) : default;
+                    if (cp.IsValid())
+                    {
+                        cp.SetApplyFootIK(false);
+                        cp.SetSpeed(1.0f);
+                        _additiveMixer.ConnectInput(s, cp, 0);
+                    }
+                    _additiveMixer.SetInputWeight(s, s == 0 ? 1.0f : 0.0f);
+                    _additiveSegmentPlayables.Add(cp);
+                }
+                _topLevelPreviewMixer.ConnectInput(3, _additiveMixer, 0);
+                _topLevelPreviewMixer.SetInputWeight(3, 0.0f);
 
                 _playableOutput = AnimationPlayableOutput.Create(_playableGraph, "Animation", _previewAnimator);
-                _playableOutput.SetSourcePlayable(_previewMixer);
+                _playableOutput.SetSourcePlayable(_topLevelPreviewMixer);
 
                 EvaluatePreviewPlayables();
                 _playableGraph.Evaluate();
@@ -626,60 +742,450 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void EvaluatePreviewPlayables()
         {
-            if (!_previewMixer.IsValid() || _previewSegmentPlayables.Count == 0 || _targetAsset == null) return;
+            if (!_topLevelPreviewMixer.IsValid() || _targetAsset == null) return;
 
-            _targetAsset.EvaluateAnimationSegments(_animationTime, _tempEvalIndices, _tempEvalTimes, _tempEvalWeights);
-
-            int total = _previewSegmentPlayables.Count;
-            for (int i = 0; i < total; i++)
+            // 0. 评估底层 Base Motion 循环播放 (Input 0)
+            if (_baseMotionPlayable.IsValid() && _currentPreviewBaseMotion != null)
             {
-                _previewMixer.SetInputWeight(i, 0.0f);
+                float baseDuration = Mathf.Max(0.001f, _currentPreviewBaseMotion.length);
+                float baseLoopTime = _animationTime % baseDuration;
+                _baseMotionPlayable.SetTime(baseLoopTime);
+                _baseMotionPlayable.SetSpeed(1.0f);
+                _topLevelPreviewMixer.SetInputWeight(0, 1.0f);
             }
+            else
+            {
+                _topLevelPreviewMixer.SetInputWeight(0, 0.0f);
+            }
+
+            // 1. 评估 FullBody (Layer 2)
+            float fullBodyWeight = 0f;
+            if (_fullBodyMixer.IsValid() && _fullBodySegmentPlayables.Count > 0)
+            {
+                _targetAsset.EvaluateChannelSegments(MontageLayerChannel.FullBody, _animationTime, _tempEvalIndices, _tempEvalTimes, _tempEvalWeights);
+
+                int total = _fullBodySegmentPlayables.Count;
+                for (int i = 0; i < total; i++)
+                {
+                    _fullBodyMixer.SetInputWeight(i, 0.0f);
+                }
+
+                float totalSegWeight = 0f;
+                for (int w = 0; w < _tempEvalWeights.Count; w++)
+                {
+                    totalSegWeight += _tempEvalWeights[w];
+                }
+
+                // 【核心修复】：子 Mixer 内部输入权重严格归一化为 1.0f，杜绝 AnimationMixerPlayable 自动填充 BindPose 0 姿态
+                for (int k = 0; k < _tempEvalIndices.Count; k++)
+                {
+                    int segIdx = _tempEvalIndices[k];
+                    if (segIdx >= 0 && segIdx < total)
+                    {
+                        var cp = _fullBodySegmentPlayables[segIdx];
+                        if (cp.IsValid())
+                        {
+                            cp.SetTime(_tempEvalTimes[k]);
+                            cp.SetSpeed(1.0f);
+                        }
+                        float normalizedW = totalSegWeight > 0.0001f ? (_tempEvalWeights[k] / totalSegWeight) : 0f;
+                        _fullBodyMixer.SetInputWeight(segIdx, normalizedW);
+                    }
+                }
+
+                fullBodyWeight = Mathf.Clamp01(totalSegWeight) * _targetAsset.FullBodyWeight;
+            }
+            _topLevelPreviewMixer.SetInputWeight(2, fullBodyWeight);
+
+            // 2. 评估 UpperBody (Layer 1)
+            float upperBodyWeight = 0f;
+            if (_targetAsset.EnableUpperBody && _upperBodyMixer.IsValid() && _upperBodySegmentPlayables.Count > 0)
+            {
+                _targetAsset.EvaluateChannelSegments(MontageLayerChannel.UpperBody, _animationTime, _tempEvalIndices, _tempEvalTimes, _tempEvalWeights);
+
+                int total = _upperBodySegmentPlayables.Count;
+                for (int i = 0; i < total; i++)
+                {
+                    _upperBodyMixer.SetInputWeight(i, 0.0f);
+                }
+
+                float totalSegWeight = 0f;
+                for (int w = 0; w < _tempEvalWeights.Count; w++)
+                {
+                    totalSegWeight += _tempEvalWeights[w];
+                }
+
+                for (int k = 0; k < _tempEvalIndices.Count; k++)
+                {
+                    int segIdx = _tempEvalIndices[k];
+                    if (segIdx >= 0 && segIdx < total)
+                    {
+                        var cp = _upperBodySegmentPlayables[segIdx];
+                        if (cp.IsValid())
+                        {
+                            cp.SetTime(_tempEvalTimes[k]);
+                            cp.SetSpeed(1.0f);
+                        }
+                        float normalizedW = totalSegWeight > 0.0001f ? (_tempEvalWeights[k] / totalSegWeight) : 0f;
+                        _upperBodyMixer.SetInputWeight(segIdx, normalizedW);
+                    }
+                }
+
+                upperBodyWeight = Mathf.Clamp01(totalSegWeight) * _targetAsset.UpperBodyWeight;
+            }
+            // 空白区自然释放权重归零，交还控制权，不锁首帧/末帧姿态
+            _topLevelPreviewMixer.SetInputWeight(1, upperBodyWeight);
+
+            // 3. 评估 Additive (Layer 3)
+            float additiveWeight = 0f;
+            if (_targetAsset.EnableAdditive && _additiveMixer.IsValid() && _additiveSegmentPlayables.Count > 0)
+            {
+                _targetAsset.EvaluateChannelSegments(MontageLayerChannel.Additive, _animationTime, _tempEvalIndices, _tempEvalTimes, _tempEvalWeights);
+
+                int total = _additiveSegmentPlayables.Count;
+                for (int i = 0; i < total; i++)
+                {
+                    _additiveMixer.SetInputWeight(i, 0.0f);
+                }
+
+                float totalSegWeight = 0f;
+                for (int w = 0; w < _tempEvalWeights.Count; w++)
+                {
+                    totalSegWeight += _tempEvalWeights[w];
+                }
+
+                for (int k = 0; k < _tempEvalIndices.Count; k++)
+                {
+                    int segIdx = _tempEvalIndices[k];
+                    if (segIdx >= 0 && segIdx < total)
+                    {
+                        var cp = _additiveSegmentPlayables[segIdx];
+                        if (cp.IsValid())
+                        {
+                            cp.SetTime(_tempEvalTimes[k]);
+                            cp.SetSpeed(1.0f);
+                        }
+                        float normalizedW = totalSegWeight > 0.0001f ? (_tempEvalWeights[k] / totalSegWeight) : 0f;
+                        _additiveMixer.SetInputWeight(segIdx, normalizedW);
+                    }
+                }
+
+                additiveWeight = Mathf.Clamp01(totalSegWeight) * _targetAsset.AdditiveWeight;
+            }
+            _topLevelPreviewMixer.SetInputWeight(3, additiveWeight);
+        }
+
+        private void ApplyUpperBodySpineDecouplingPreview()
+        {
+            if (_previewAnimator == null || !_previewAnimator.isHuman || _targetAsset == null || !_targetAsset.DecoupleUpperBodyOrientation) return;
+            if (!_targetAsset.EnableUpperBody || !_upperBodyMixer.IsValid() || _upperBodySegmentPlayables.Count == 0) return;
+
+            // 0. 若 FullBody 当前正在播放且具有有效权重，FullBody 拥有霸权主导权，严禁篡改 Spine 姿态！
+            if (_fullBodyMixer.IsValid() && _fullBodySegmentPlayables.Count > 0)
+            {
+                _targetAsset.EvaluateChannelSegments(MontageLayerChannel.FullBody, _animationTime, _tempEvalIndices, _tempEvalTimes, _tempEvalWeights);
+                if (_tempEvalIndices.Count > 0)
+                {
+                    float fullWeight = 0f;
+                    for (int w = 0; w < _tempEvalWeights.Count; w++) fullWeight += _tempEvalWeights[w];
+                    if (fullWeight > 0.0001f)
+                    {
+                        return; // 全身动画主导中，直接退出
+                    }
+                }
+            }
+
+            var upperSegments = _targetAsset.UpperBodySegments;
+            if (upperSegments == null || upperSegments.Count == 0) return;
+
+            Transform root = _previewAnimator != null ? _previewAnimator.transform : (_previewObject != null ? _previewObject.transform : null);
+            Transform hips = _previewAnimator.GetBoneTransform(HumanBodyBones.Hips);
+            Transform spine = _previewAnimator.GetBoneTransform(HumanBodyBones.Spine);
+            if (root == null || hips == null || spine == null) return;
+
+            _targetAsset.EvaluateChannelSegments(MontageLayerChannel.UpperBody, _animationTime, _tempEvalIndices, _tempEvalTimes, _tempEvalWeights);
+            if (_tempEvalIndices.Count == 0) return;
+
+            Quaternion targetSpineInRoot = Quaternion.identity;
+            float totalWeight = 0f;
 
             for (int k = 0; k < _tempEvalIndices.Count; k++)
             {
                 int segIdx = _tempEvalIndices[k];
-                if (segIdx >= 0 && segIdx < total)
+                if (segIdx >= 0 && segIdx < upperSegments.Count)
                 {
-                    var cp = _previewSegmentPlayables[segIdx];
-                    if (cp.IsValid())
+                    var seg = upperSegments[segIdx];
+                    if (seg?.Clip != null)
                     {
-                        cp.SetTime(_tempEvalTimes[k]);
-                        cp.SetSpeed(1.0f);
+                        var track = MontageSpineDecoupleUtility.GetOrCreateTrack(seg.Clip, _previewAnimator);
+                        if (track != null)
+                        {
+                            Quaternion sample = track.Evaluate(_tempEvalTimes[k]);
+                            float w = _tempEvalWeights[k];
+                            if (totalWeight <= 0.0001f)
+                            {
+                                targetSpineInRoot = sample;
+                                totalWeight = w;
+                            }
+                            else
+                            {
+                                float blendT = w / (totalWeight + w);
+                                targetSpineInRoot = Quaternion.Slerp(targetSpineInRoot, sample, blendT);
+                                totalWeight += w;
+                            }
+                        }
                     }
-                    _previewMixer.SetInputWeight(segIdx, _tempEvalWeights[k]);
                 }
             }
+
+            if (totalWeight <= 0.0001f) return;
+
+            // 核心解耦反解：计算 Spine 在当前 Hips 下的基础局部旋转，使得 Spine 世界朝向精确锁定为角色根空间下的 targetSpineInRoot
+            Quaternion targetSpineWorld = root.rotation * targetSpineInRoot;
+            Quaternion decoupledLocal = Quaternion.Inverse(hips.rotation) * targetSpineWorld;
+
+            // 复合叠加层（Additive）姿态增量：确保预览时解耦行为只限于 UpperBody，Additive 的受击/开火抖动平滑叠加在解耦姿态之上
+            Quaternion finalDecoupledLocal = decoupledLocal;
+            if (_targetAsset.EnableAdditive && _additiveMixer.IsValid() && _additiveSegmentPlayables.Count > 0)
+            {
+                var addSegments = _targetAsset.AdditiveSegments;
+                if (addSegments != null && addSegments.Count > 0)
+                {
+                    _targetAsset.EvaluateChannelSegments(MontageLayerChannel.Additive, _animationTime, _tempEvalIndices, _tempEvalTimes, _tempEvalWeights);
+                    if (_tempEvalIndices.Count > 0)
+                    {
+                        Quaternion additiveSpineDelta = Quaternion.identity;
+                        float addTotalWeight = 0f;
+
+                        for (int a = 0; a < _tempEvalIndices.Count; a++)
+                        {
+                            int addSegIdx = _tempEvalIndices[a];
+                            if (addSegIdx >= 0 && addSegIdx < addSegments.Count)
+                            {
+                                var seg = addSegments[addSegIdx];
+                                if (seg?.Clip != null)
+                                {
+                                    var addTrack = MontageSpineDecoupleUtility.GetOrCreateAdditiveTrack(seg.Clip, _previewAnimator);
+                                    if (addTrack != null)
+                                    {
+                                        Quaternion sample = addTrack.Evaluate(_tempEvalTimes[a]);
+                                        float w = _tempEvalWeights[a];
+                                        if (addTotalWeight <= 0.0001f)
+                                        {
+                                            additiveSpineDelta = sample;
+                                            addTotalWeight = w;
+                                        }
+                                        else
+                                        {
+                                            float blendT = w / (addTotalWeight + w);
+                                            additiveSpineDelta = Quaternion.Slerp(additiveSpineDelta, sample, blendT);
+                                            addTotalWeight += w;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (addTotalWeight > 0.0001f)
+                        {
+                            float effectiveAddWeight = Mathf.Clamp01(addTotalWeight * _targetAsset.AdditiveWeight);
+                            Quaternion appliedDelta = Quaternion.Slerp(Quaternion.identity, additiveSpineDelta, effectiveAddWeight);
+                            finalDecoupledLocal = decoupledLocal * appliedDelta;
+                        }
+                    }
+                }
+            }
+
+            float blendWeight = Mathf.Clamp01(totalWeight * _targetAsset.UpperBodyWeight);
+            spine.localRotation = Quaternion.Slerp(spine.localRotation, finalDecoupledLocal, blendWeight);
         }
 
         private void HandleAnimationTrackModified()
         {
-            bool structureChanged = false;
-            int assetSegCount = _targetAsset?.AnimationSegments != null ? _targetAsset.AnimationSegments.Count : 0;
-            if (_previewSegmentPlayables.Count != assetSegCount)
+            bool structureChanged =
+                CheckChannelStructureChanged(_targetAsset?.UpperBodySegments, _upperBodySegmentPlayables) ||
+                CheckChannelStructureChanged(_targetAsset?.FullBodySegments, _fullBodySegmentPlayables) ||
+                CheckChannelStructureChanged(_targetAsset?.AdditiveSegments, _additiveSegmentPlayables);
+
+            UpdateTimelineLengthsAndSync(fullRebuild: structureChanged);
+
+            if (!_isPlaying)
             {
-                structureChanged = true;
+                EvaluateTimeAndPreviewLogic(0f);
+                _viewport?.RenderImmediate();
             }
-            else if (_targetAsset?.AnimationSegments != null)
+        }
+
+        private static bool CheckChannelStructureChanged(List<MontageAnimationSegment> segments, List<AnimationClipPlayable> playables)
+        {
+            int segCount = segments != null ? segments.Count : 0;
+            if (playables.Count != segCount) return true;
+            if (segments != null)
             {
-                for (int i = 0; i < assetSegCount; i++)
+                for (int i = 0; i < segCount; i++)
                 {
-                    var seg = _targetAsset.AnimationSegments[i];
-                    var cp = _previewSegmentPlayables[i];
-                    if (seg?.Clip == null && cp.IsValid())
-                    {
-                        structureChanged = true;
-                        break;
-                    }
-                    if (seg?.Clip != null && (!cp.IsValid() || cp.GetAnimationClip() != seg.Clip))
-                    {
-                        structureChanged = true;
-                        break;
-                    }
+                    var seg = segments[i];
+                    var cp = playables[i];
+                    if (seg?.Clip == null && cp.IsValid()) return true;
+                    if (seg?.Clip != null && (!cp.IsValid() || cp.GetAnimationClip() != seg.Clip)) return true;
+                }
+            }
+            return false;
+        }
+
+        private void BindAnimationTrackCallbacks(MontageAnimationTrackElement trackElement)
+        {
+            trackElement.OnSegmentSelected += (seg, idx) =>
+            {
+                if (_additiveTrackElement != trackElement) _additiveTrackElement?.ClearSelection();
+                if (_fullBodyTrackElement != trackElement) _fullBodyTrackElement?.ClearSelection();
+                if (_upperBodyTrackElement != trackElement) _upperBodyTrackElement?.ClearSelection();
+
+                _selectedSegment = seg;
+                _selectedAnimationTrack = trackElement;
+
+                _selectedBlock?.SetSelected(false);
+                _selectedBlock = null;
+                _selectedBlockData = null;
+                _inspector.InspectAnimationSegment(seg, idx, _targetAsset);
+            };
+            trackElement.OnDataModified += HandleAnimationTrackModified;
+            trackElement.OnRequestScrubTime += ScrubToTime;
+            trackElement.RequestTargetTrack = GetAnimationTrackAtPosition;
+            trackElement.RequestCrossTrackMove = HandleCrossTrackSegmentMove;
+            trackElement.OnTrackDropHighlightChanged = HandleTrackDropHighlightChanged;
+        }
+
+        private MontageAnimationTrackElement GetAnimationTrackAtPosition(Vector2 worldPos)
+        {
+            // 按照在视口中的可见动画轨道进行碰撞判定
+            if (_targetAsset != null && _targetAsset.EnableAdditive && _additiveTrackElement != null)
+            {
+                var bound = _additiveTrackElement.ContentElement.worldBound;
+                if (worldPos.y >= bound.yMin && worldPos.y <= bound.yMax)
+                {
+                    return _additiveTrackElement;
                 }
             }
 
-            UpdateTimelineLengthsAndSync(fullRebuild: structureChanged);
+            if (_fullBodyTrackElement != null)
+            {
+                var bound = _fullBodyTrackElement.ContentElement.worldBound;
+                if (worldPos.y >= bound.yMin && worldPos.y <= bound.yMax)
+                {
+                    return _fullBodyTrackElement;
+                }
+            }
+
+            if (_targetAsset != null && _targetAsset.EnableUpperBody && _upperBodyTrackElement != null)
+            {
+                var bound = _upperBodyTrackElement.ContentElement.worldBound;
+                if (worldPos.y >= bound.yMin && worldPos.y <= bound.yMax)
+                {
+                    return _upperBodyTrackElement;
+                }
+            }
+
+            return null;
+        }
+
+        private void HandleTrackDropHighlightChanged(MontageAnimationTrackElement activeTrack, bool isHighlighted)
+        {
+            if (_additiveTrackElement != null && _additiveTrackElement != activeTrack)
+            {
+                _additiveTrackElement.SetDropHighlight(false);
+            }
+            if (_fullBodyTrackElement != null && _fullBodyTrackElement != activeTrack)
+            {
+                _fullBodyTrackElement.SetDropHighlight(false);
+            }
+            if (_upperBodyTrackElement != null && _upperBodyTrackElement != activeTrack)
+            {
+                _upperBodyTrackElement.SetDropHighlight(false);
+            }
+        }
+
+        private void HandleCrossTrackSegmentMove(
+            MontageAnimationTrackElement sourceTrack,
+            MontageAnimationTrackElement targetTrack,
+            MontageAnimationSegment segment,
+            float targetStartTime)
+        {
+            if (_targetAsset == null || sourceTrack == null || targetTrack == null || segment == null) return;
+            if (sourceTrack == targetTrack) return;
+
+            Undo.RecordObject(_targetAsset, $"Move Segment to {targetTrack.Channel}");
+
+            float frameInterval = 1f / Mathf.Max(1f, _frameRate);
+            float snappedTime = Mathf.Round(Mathf.Max(0f, targetStartTime) / frameInterval) * frameInterval;
+            segment.StartTime = snappedTime;
+
+            _targetAsset.MoveSegmentChannel(segment, sourceTrack.Channel, targetTrack.Channel);
+
+            _targetAsset.SortChannelSegments(sourceTrack.Channel);
+            _targetAsset.SortChannelSegments(targetTrack.Channel);
+            _targetAsset.EnsureSegmentsValid();
+
+            sourceTrack.RebuildSegments();
+            targetTrack.RebuildSegments();
+
+            targetTrack.SelectSegment(segment);
+            _selectedSegment = segment;
+            _selectedAnimationTrack = targetTrack;
+
+            EditorUtility.SetDirty(_targetAsset);
+            HandleAnimationTrackModified();
+        }
+
+        private void PasteCopiedSegment(MontageAnimationTrackElement targetTrack, float targetTime)
+        {
+            var track = targetTrack ?? _selectedAnimationTrack ?? _fullBodyTrackElement;
+            if (track != null)
+            {
+                track.PasteCopiedSegmentAt(targetTime);
+                _selectedAnimationTrack = track;
+                _selectedSegment = track.SelectedSegment;
+            }
+        }
+
+        private void UpdateLayersDropdownVisual()
+        {
+            if (_layersDropdownBtn == null || _targetAsset == null) return;
+
+            int activeCount = 1; // FullBody 为核心主层，默认常开
+            if (_targetAsset.EnableUpperBody) activeCount++;
+            if (_targetAsset.EnableAdditive) activeCount++;
+
+            _layersDropdownBtn.text = $"Layers ({activeCount}/3) ▾";
+        }
+
+        private void ShowChannelsMenu()
+        {
+            if (_targetAsset == null) return;
+            var menu = new GenericMenu();
+            menu.AddItem(new GUIContent("Layer 3: Additive (Tremor & Overlay)"), _targetAsset.EnableAdditive, () => ToggleChannel(MontageLayerChannel.Additive));
+            menu.AddDisabledItem(new GUIContent("Layer 2: FullBody (Master - Always Active)"), true);
+            menu.AddItem(new GUIContent("Layer 1: UpperBody (Masked Locomotion)"), _targetAsset.EnableUpperBody, () => ToggleChannel(MontageLayerChannel.UpperBody));
+            menu.ShowAsContext();
+        }
+
+        private void ToggleChannel(MontageLayerChannel channel)
+        {
+            if (_targetAsset == null) return;
+            Undo.RecordObject(_targetAsset, "Toggle Channel Track");
+            if (channel == MontageLayerChannel.Additive)
+            {
+                _targetAsset.EnableAdditive = !_targetAsset.EnableAdditive;
+            }
+            else if (channel == MontageLayerChannel.UpperBody)
+            {
+                _targetAsset.EnableUpperBody = !_targetAsset.EnableUpperBody;
+            }
+            EditorUtility.SetDirty(_targetAsset);
+            UpdateLayersDropdownVisual();
+            RebuildTracks();
+            InitializePreviewAndPlayables();
+            OnAssetModified?.Invoke();
         }
 
         private float GetViewportWidth()
@@ -745,8 +1251,14 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _sectionTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
             _sectionTrackElement?.SetZoom(_zoomLevel);
 
-            _animationTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
-            _animationTrackElement?.SetZoom(_zoomLevel);
+            _additiveTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+            _additiveTrackElement?.SetZoom(_zoomLevel);
+
+            _fullBodyTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+            _fullBodyTrackElement?.SetZoom(_zoomLevel);
+
+            _upperBodyTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+            _upperBodyTrackElement?.SetZoom(_zoomLevel);
 
             for (int i = 0; i < _trackElements.Count; i++)
             {
@@ -803,20 +1315,34 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                     _previewAnimator.applyRootMotion = _previewRootMotion;
                 }
 
-                for (int i = 0; i < _previewSegmentPlayables.Count; i++)
+                for (int i = 0; i < _upperBodySegmentPlayables.Count; i++)
                 {
-                    if (_previewSegmentPlayables[i].IsValid())
+                    if (_upperBodySegmentPlayables[i].IsValid())
                     {
-                        _previewSegmentPlayables[i].SetApplyFootIK(_previewFootIK);
+                        _upperBodySegmentPlayables[i].SetApplyFootIK(_previewFootIK);
+                    }
+                }
+
+                for (int i = 0; i < _fullBodySegmentPlayables.Count; i++)
+                {
+                    if (_fullBodySegmentPlayables[i].IsValid())
+                    {
+                        _fullBodySegmentPlayables[i].SetApplyFootIK(_previewFootIK);
                     }
                 }
 
                 _sectionTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
-                _animationTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+                _additiveTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+                _fullBodyTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+                _upperBodyTrackElement?.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+
+                UpdateLayersDropdownVisual();
+                RebuildTracks();
             }
 
             if (!_isPlaying)
             {
+                EvaluateTimeAndPreviewLogic(0f);
                 _viewport?.RenderImmediate();
             }
 
@@ -855,7 +1381,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 }
             }
 
-            // 3. 插件专属默认内置模型 (优先通过固定 GUID 解析)
+            // 3. 插件专属默认内置模型 (基于固定 GUID 解析，移动插件目录无缝自适应)
             string defaultPath = AssetDatabase.GUIDToAssetPath(DEFAULT_DUMMY_MODEL_GUID);
             if (!string.IsNullOrEmpty(defaultPath))
             {
@@ -866,36 +1392,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 }
             }
 
-            // 4. 动态文件名检索保底 (防止 GUID 变动或环境解析延迟)
-            string[] foundGuids = AssetDatabase.FindAssets("UAL1_Standard t:Model");
-            if (foundGuids.Length == 0)
-            {
-                foundGuids = AssetDatabase.FindAssets("UAL1_Standard t:GameObject");
-            }
-            if (foundGuids.Length > 0)
-            {
-                string fallbackPath = AssetDatabase.GUIDToAssetPath(foundGuids[0]);
-                var fallbackModel = AssetDatabase.LoadAssetAtPath<GameObject>(fallbackPath);
-                if (fallbackModel != null)
-                {
-                    EditorPrefs.SetString(PREVIEW_MODEL_PREFS_KEY, foundGuids[0]);
-                    return fallbackModel;
-                }
-            }
-
-            // 5. 路径保底：尝试直接从插件 Demo 相对路径加载
-            const string relativePath = "Assets/CwcPlugins/CwcMontage/Demo/Models/Universal Animation Library[Standard]/Unity/UAL1_Standard.fbx";
-            var relativeModel = AssetDatabase.LoadAssetAtPath<GameObject>(relativePath);
-            if (relativeModel != null)
-            {
-                string guid = AssetDatabase.AssetPathToGUID(relativePath);
-                if (!string.IsNullOrEmpty(guid))
-                {
-                    EditorPrefs.SetString(PREVIEW_MODEL_PREFS_KEY, guid);
-                }
-                return relativeModel;
-            }
-
+            // 4. 若用户移除了示例模型资产或未配置，优雅降级返回 null（视口模型保持为空，不抛出异常）
             return null;
         }
 
@@ -921,14 +1418,136 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _viewport.RenderImmediate();
         }
 
+        private AnimationClip ResolvePreviewBaseMotion()
+        {
+            // 1. 优先读取持久化配置 (支持独立 .anim 文件的 GUID 与 FBX 内子资产的 "GUID#ClipName" 格式)
+            string savedValue = EditorPrefs.GetString(PREVIEW_BASE_MOTION_PREFS_KEY, "");
+            if (savedValue == "NONE")
+            {
+                savedValue = "";
+                EditorPrefs.DeleteKey(PREVIEW_BASE_MOTION_PREFS_KEY);
+            }
+
+            if (!string.IsNullOrEmpty(savedValue))
+            {
+                string guid = savedValue;
+                string subName = null;
+                int hashIdx = savedValue.IndexOf('#');
+                if (hashIdx >= 0)
+                {
+                    guid = savedValue.Substring(0, hashIdx);
+                    subName = savedValue.Substring(hashIdx + 1);
+                }
+
+                string path = AssetDatabase.GUIDToAssetPath(guid);
+                if (!string.IsNullOrEmpty(path))
+                {
+                    var clip = LoadAnimationClipByPathAndName(path, subName);
+                    if (clip != null)
+                    {
+                        return clip;
+                    }
+                }
+            }
+
+            // 2. 插件专属默认内置保底：通过固定 GUID 定位示例模型并加载内部的 Walk 循环动画（自适应任意目录移动）
+            string defaultFbxPath = AssetDatabase.GUIDToAssetPath(DEFAULT_DUMMY_MODEL_GUID);
+            if (!string.IsNullOrEmpty(defaultFbxPath))
+            {
+                var defaultWalkClip = LoadAnimationClipByPathAndName(defaultFbxPath, "Walk_Loop")
+                                   ?? LoadAnimationClipByPathAndName(defaultFbxPath, "Walk");
+                if (defaultWalkClip != null)
+                {
+                    return defaultWalkClip;
+                }
+            }
+
+            // 3. 若用户移除了示例模型资产，优雅降级返回 null（保持静态姿态）
+            return null;
+        }
+
+        private static AnimationClip LoadAnimationClipByPathAndName(string assetPath, string clipName)
+        {
+            if (string.IsNullOrEmpty(assetPath)) return null;
+
+            var assets = AssetDatabase.LoadAllAssetsAtPath(assetPath);
+            if (assets == null || assets.Length == 0) return null;
+
+            AnimationClip fallbackClip = null;
+            for (int i = 0; i < assets.Length; i++)
+            {
+                if (assets[i] is AnimationClip clip)
+                {
+                    if (clip.name.StartsWith("__preview__")) continue;
+
+                    if (!string.IsNullOrEmpty(clipName))
+                    {
+                        if (string.Equals(clip.name, clipName, StringComparison.OrdinalIgnoreCase) ||
+                            clip.name.IndexOf(clipName, StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            return clip;
+                        }
+                    }
+
+                    if (fallbackClip == null)
+                    {
+                        fallbackClip = clip;
+                    }
+                }
+            }
+
+            return string.IsNullOrEmpty(clipName) ? fallbackClip : null;
+        }
+
+        private void SaveBaseMotionPreference(AnimationClip clip)
+        {
+            if (clip != null)
+            {
+                string path = AssetDatabase.GetAssetPath(clip);
+                string guid = AssetDatabase.AssetPathToGUID(path);
+                if (!string.IsNullOrEmpty(guid))
+                {
+                    if (AssetDatabase.IsSubAsset(clip))
+                    {
+                        EditorPrefs.SetString(PREVIEW_BASE_MOTION_PREFS_KEY, $"{guid}#{clip.name}");
+                    }
+                    else
+                    {
+                        EditorPrefs.SetString(PREVIEW_BASE_MOTION_PREFS_KEY, guid);
+                    }
+                }
+            }
+            else
+            {
+                // 清空时移除偏好设置记录，触发下次自动回退至默认 Walk 循环动作
+                EditorPrefs.DeleteKey(PREVIEW_BASE_MOTION_PREFS_KEY);
+            }
+        }
+
+        private void OnViewportBaseMotionChanged(AnimationClip newClip)
+        {
+            _currentPreviewBaseMotion = newClip;
+            SaveBaseMotionPreference(newClip);
+
+            InitializePreviewAndPlayables();
+            _viewport.RenderImmediate();
+        }
+
         private void CleanupPlayablesAndPreview()
         {
             _isPlaying = false;
             ExitAllActiveActionBlocks();
             MontageAudioPreviewUtility.StopAllClips();
 
-            _previewSegmentPlayables.Clear();
-            if (_previewMixer.IsValid()) _previewMixer = default;
+            _upperBodySegmentPlayables.Clear();
+            _fullBodySegmentPlayables.Clear();
+            _additiveSegmentPlayables.Clear();
+
+            if (_baseMotionPlayable.IsValid()) _baseMotionPlayable = default;
+            if (_upperBodyMixer.IsValid()) _upperBodyMixer = default;
+            if (_fullBodyMixer.IsValid()) _fullBodyMixer = default;
+            if (_additiveMixer.IsValid()) _additiveMixer = default;
+            if (_topLevelPreviewMixer.IsValid()) _topLevelPreviewMixer = default;
 
             if (_playableGraph.IsValid())
             {
@@ -959,12 +1578,26 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 _tracksContentWrapper?.Add(_sectionTrackElement.ContentElement);
             }
 
-            // 2. 挂载核心单动画主干轨道 (Animation Track)
-            if (_animationTrackElement != null)
+            // 2. 挂载三大确定人形通道动画轨道（自上而下按层级优先级呈现：Additive -> FullBody -> UpperBody）
+            if (_targetAsset != null && _targetAsset.EnableAdditive && _additiveTrackElement != null)
             {
-                _animationTrackElement.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
-                _headersContentWrapper?.Add(_animationTrackElement.HeaderElement);
-                _tracksContentWrapper?.Add(_animationTrackElement.ContentElement);
+                _additiveTrackElement.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+                _headersContentWrapper?.Add(_additiveTrackElement.HeaderElement);
+                _tracksContentWrapper?.Add(_additiveTrackElement.ContentElement);
+            }
+
+            if (_fullBodyTrackElement != null)
+            {
+                _fullBodyTrackElement.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+                _headersContentWrapper?.Add(_fullBodyTrackElement.HeaderElement);
+                _tracksContentWrapper?.Add(_fullBodyTrackElement.ContentElement);
+            }
+
+            if (_targetAsset != null && _targetAsset.EnableUpperBody && _upperBodyTrackElement != null)
+            {
+                _upperBodyTrackElement.SetTargetAsset(_targetAsset, _clipLength, _frameRate, _contentDuration);
+                _headersContentWrapper?.Add(_upperBodyTrackElement.HeaderElement);
+                _tracksContentWrapper?.Add(_upperBodyTrackElement.ContentElement);
             }
 
             if (_targetAsset?.Tracks != null)
@@ -1439,13 +2072,27 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _previewFootIK = enabled;
             EditorPrefs.SetBool(PREFS_PREVIEW_FOOT_IK_KEY, enabled);
 
-            for (int i = 0; i < _previewSegmentPlayables.Count; i++)
+            for (int i = 0; i < _upperBodySegmentPlayables.Count; i++)
             {
-                var cp = _previewSegmentPlayables[i];
+                var cp = _upperBodySegmentPlayables[i];
                 if (cp.IsValid())
                 {
                     cp.SetApplyFootIK(enabled);
                 }
+            }
+
+            for (int i = 0; i < _fullBodySegmentPlayables.Count; i++)
+            {
+                var cp = _fullBodySegmentPlayables[i];
+                if (cp.IsValid())
+                {
+                    cp.SetApplyFootIK(enabled);
+                }
+            }
+
+            if (_baseMotionPlayable.IsValid())
+            {
+                _baseMotionPlayable.SetApplyFootIK(enabled);
             }
 
             _viewport.RenderFrame();
@@ -1472,11 +2119,12 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         {
             if (_playableGraph.IsValid())
             {
-                if (_previewMixer.IsValid())
+                if (_topLevelPreviewMixer.IsValid())
                 {
                     EvaluatePreviewPlayables();
                 }
                 _playableGraph.Evaluate();
+                ApplyUpperBodySpineDecouplingPreview();
             }
 
             // 区间扫掠评估所有动作块（调用专用视口预览生命周期）
@@ -1671,7 +2319,10 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void SelectBlock(MontageActionBlockElement block)
         {
-            _animationTrackElement?.ClearSelection();
+            _additiveTrackElement?.ClearSelection();
+            _fullBodyTrackElement?.ClearSelection();
+            _upperBodyTrackElement?.ClearSelection();
+            _selectedSegment = null;
             SelectBlockVisual(block);
             if (block != null && block.TrackIndex >= 0 && block.TrackIndex < _trackElements.Count)
             {
@@ -1981,7 +2632,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             // 3. 复制 (必须为 Ctrl+C / Cmd+C)
             else if (evt.actionKey && evt.keyCode == KeyCode.C)
             {
-                if (_selectedBlock != null)
+                if (_selectedSegment != null)
+                {
+                    MontageClipboard.CopySegment(_selectedSegment);
+                }
+                else if (_selectedBlock != null)
                 {
                     MontageClipboard.CopyActionBlock(_selectedBlock.Data);
                 }
@@ -1994,7 +2649,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             // 4. 粘贴 (必须为 Ctrl+V / Cmd+V)
             else if (evt.actionKey && evt.keyCode == KeyCode.V)
             {
-                if (MontageClipboard.HasCopiedTrack && _selectedBlock == null)
+                if (MontageClipboard.HasCopiedSegment && (_selectedAnimationTrack != null || _selectedBlock == null))
+                {
+                    PasteCopiedSegment(_selectedAnimationTrack ?? _fullBodyTrackElement, _animationTime);
+                }
+                else if (MontageClipboard.HasCopiedTrack && _selectedBlock == null)
                 {
                     if (_selectedTrack != null)
                     {
@@ -2014,7 +2673,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             // 5. 复制副本 (Ctrl+D)
             else if (evt.actionKey && evt.keyCode == KeyCode.D)
             {
-                if (_selectedBlock != null)
+                if (_selectedSegment != null && _selectedAnimationTrack != null)
+                {
+                    _selectedAnimationTrack.DuplicateSelectedSegment();
+                }
+                else if (_selectedBlock != null)
                 {
                     DuplicateBlock(_selectedBlock);
                 }
@@ -2027,7 +2690,13 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             // 6. 删除 (Delete 或 Backspace)
             else if (evt.keyCode == KeyCode.Delete || evt.keyCode == KeyCode.Backspace)
             {
-                if (_selectedBlock != null && _selectedTrack != null)
+                if (_selectedSegment != null && _selectedAnimationTrack != null)
+                {
+                    _selectedAnimationTrack.DeleteSelectedSegment();
+                    _selectedSegment = null;
+                    _inspector?.ClearActionInspect();
+                }
+                else if (_selectedBlock != null && _selectedTrack != null)
                 {
                     _selectedTrack.TrackData.ActionBlocks.Remove(_selectedBlock.Data);
                     _inspector.ClearActionInspect();

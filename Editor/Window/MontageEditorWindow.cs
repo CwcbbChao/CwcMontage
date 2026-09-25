@@ -35,7 +35,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         #region Unity 生命周期
 
-        [MenuItem("Window/Cwc/Montage Editor (动作蒙太奇编辑器)")]
+        [MenuItem("Window/Cwc/Montage Editor")]
         public static void OpenWindow()
         {
             var window = GetWindow<MontageEditorWindow>();

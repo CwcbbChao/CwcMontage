@@ -34,8 +34,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private readonly List<Renderer> _cachedRenderers = new();
 
-        // 视口光照与地面网格
         private ObjectField _modelObjectField;
+        private ObjectField _baseMotionObjectField;
         private Button _rootMotionBtn;
         private Button _footIKBtn;
         private Button _toggleUnlitBtn;
@@ -52,6 +52,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         /// 当用户在视口中切换或拖入新的预览模型时触发。
         /// </summary>
         public event Action<GameObject> OnPreviewModelChanged;
+
+        /// <summary>
+        /// 当用户在视口中切换或拖入新的底层循环动作（Base Locomotion Motion）时触发。
+        /// </summary>
+        public event Action<AnimationClip> OnPreviewBaseMotionChanged;
 
         /// <summary>
         /// 当用户切换预览根运动（Root Motion）时触发。
@@ -113,6 +118,31 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             modelBox.Add(_modelObjectField);
 
             overlayBar.Add(modelBox);
+
+            // 1.5 预览底层循环动作选择框 (Base Locomotion Motion)
+            var baseMotionBox = new VisualElement();
+            baseMotionBox.AddToClassList("montage-overlay-model-box");
+
+            var baseMotionLbl = new Label("Base");
+            baseMotionLbl.AddToClassList("montage-overlay-model-label");
+            baseMotionBox.Add(baseMotionLbl);
+
+            _baseMotionObjectField = new ObjectField
+            {
+                objectType = typeof(AnimationClip),
+                allowSceneObjects = false
+            };
+            _baseMotionObjectField.AddToClassList("montage-overlay-model-field");
+            _baseMotionObjectField.style.width = 110;
+            _baseMotionObjectField.tooltip = "Preview Base Locomotion Animation (Looping Idle/Run/Walk under upper-body montages. Set to None for static T-Pose)";
+            _baseMotionObjectField.RegisterValueChangedCallback(evt =>
+            {
+                var newClip = evt.newValue as AnimationClip;
+                OnPreviewBaseMotionChanged?.Invoke(newClip);
+            });
+            baseMotionBox.Add(_baseMotionObjectField);
+
+            overlayBar.Add(baseMotionBox);
 
             // 2. 动画设置按钮组 (Root Motion & Foot IK)
             var animSeparator = new VisualElement();
@@ -358,6 +388,17 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
             _renderUtility?.Cleanup();
             _renderUtility = null;
+        }
+
+        /// <summary>
+        /// 设置当前选中的预览底层循环动作资产（无需触发变更事件）。
+        /// </summary>
+        public void SetSelectedBaseMotion(AnimationClip clip)
+        {
+            if (_baseMotionObjectField != null)
+            {
+                _baseMotionObjectField.SetValueWithoutNotify(clip);
+            }
         }
 
         #endregion

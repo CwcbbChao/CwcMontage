@@ -7,7 +7,7 @@ using UnityEngine.Playables;
 namespace Cwcbb.Tools.CwcMontage
 {
     /// <summary>
-    /// 单个动画图层的配置数据。
+    /// 单个动画图层的配置数据（向后兼容保留定义）。
     /// </summary>
     [Serializable]
     public struct MontageLayerConfig
@@ -25,8 +25,9 @@ namespace Cwcbb.Tools.CwcMontage
 
     /// <summary>
     /// 蒙太奇全局驱动协调器组件（MonoBehaviour）。
-    /// 基于 Unity Playables API 构建固定拓扑的双缓冲槽（Dual-Slot Ping-Pong）混音架构，
-    /// 驱动各层蒙太奇交叉淡入淡出、时钟评估与根运动（Root Motion）解耦分发。
+    /// 专为人形（Humanoid）角色设计的高性能、零配置驱动核心。
+    /// 基于 Unity Playables API 构建固定四层拓扑结构（Locomotion -> UpperBody -> FullBody -> Additive），
+    /// 内置标准 Humanoid 上半身遮罩，实现动画与角色的完全解耦与无差异执行。
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("Cwcbb/Montage/Montage Coordinator")]
@@ -42,6 +43,8 @@ namespace Cwcbb.Tools.CwcMontage
             public MontagePlayer Player;
             public float Weight;
             public int Generation { get; set; } = 1;
+            public bool HasActiveAnimation { get; set; }
+            public float CurrentSegmentWeightMultiplier { get; set; } = 1.0f;
 
             public readonly List<int> TempEvalIndices = new();
             public readonly List<float> TempEvalTimes = new();
@@ -86,6 +89,8 @@ namespace Cwcbb.Tools.CwcMontage
             {
                 Player = null;
                 Weight = 0f;
+                HasActiveAnimation = false;
+                CurrentSegmentWeightMultiplier = 1.0f;
                 TempEvalIndices.Clear();
                 TempEvalTimes.Clear();
                 TempEvalWeights.Clear();
@@ -94,18 +99,21 @@ namespace Cwcbb.Tools.CwcMontage
 
         private class LayerRuntimeState
         {
-            public readonly int LayerIndex;
+            public readonly MontageLayerChannel Channel;
+            public readonly int LayerIndex; // 0: UpperBody, 1: FullBody, 2: Additive
+            public readonly int TopLevelInputIndex; // 1, 2, 3
             public AnimationMixerPlayable LayerMixer;
-            public MontageLayerConfig Config;
 
             public readonly SlotState Slot0 = new(0);
             public readonly SlotState Slot1 = new(1);
             public int ActiveSlotIndex = -1;
+            public float LayerWeight = 1.0f;
 
-            public LayerRuntimeState(int layerIndex, MontageLayerConfig config)
+            public LayerRuntimeState(MontageLayerChannel channel, int layerIndex, int topLevelInputIndex)
             {
+                Channel = channel;
                 LayerIndex = layerIndex;
-                Config = config;
+                TopLevelInputIndex = topLevelInputIndex;
             }
         }
 
@@ -117,9 +125,9 @@ namespace Cwcbb.Tools.CwcMontage
         [Tooltip("绑定的目标 Animator 组件。若为空将在自身及子物体中自动查找。")]
         [SerializeField] private Animator _animator;
 
-        [Header("Layer Configurations")]
-        [Tooltip("动作叠加/覆盖图层配置列表（Layer 1 ~ N，Layer 0 为底层状态机）。")]
-        [SerializeField] private List<MontageLayerConfig> _layers = new();
+        [Header("Humanoid Layer Settings")]
+        [Tooltip("可选自定义上半身骨骼遮罩（若为空则自动使用通用 Humanoid 标准上半身遮罩，实现开箱即用）。")]
+        [SerializeField] private AvatarMask _customUpperBodyMask;
 
         [Header("Playback Defaults")]
         [Tooltip("全局播放速率缩放倍率。")]
@@ -136,8 +144,9 @@ namespace Cwcbb.Tools.CwcMontage
         private RuntimeAnimatorController _originalController;
         private MontageAnimatorDispatcher _animatorDispatcher;
 
-        private readonly List<LayerRuntimeState> _layerStates = new(4);
+        private readonly List<LayerRuntimeState> _layerStates = new(3);
         private readonly Transform[] _cachedBones = new Transform[MontageBoneUtility.BONE_COUNT];
+        private readonly HashSet<MontagePlayer> _tickablePlayers = new(4);
         private IMontageRootMotionReceiver _cachedReceiver;
 
         private bool _isGraphInitialized;
@@ -172,9 +181,19 @@ namespace Cwcbb.Tools.CwcMontage
         }
 
         /// <summary>
-        /// 当前主层（Layer 0）活跃的蒙太奇播放句柄。
+        /// 当前主层（优先 FullBody，其次 UpperBody/Additive）活跃的蒙太奇播放句柄。
         /// </summary>
-        public MontageHandle ActiveHandle => GetActiveHandle(0);
+        public MontageHandle ActiveHandle
+        {
+            get
+            {
+                var h = GetActiveHandle(MontageLayerChannel.FullBody);
+                if (h.IsValid) return h;
+                h = GetActiveHandle(MontageLayerChannel.UpperBody);
+                if (h.IsValid) return h;
+                return GetActiveHandle(MontageLayerChannel.Additive);
+            }
+        }
 
         /// <summary>
         /// 全局播放速率缩放倍率。
@@ -230,11 +249,14 @@ namespace Cwcbb.Tools.CwcMontage
 
             float effectiveDelta = Time.deltaTime * _globalPlaybackRate;
 
-            // 1. 先更新各个动作图层中的双缓冲 Slot 播放器与 CrossFade 权重（同步 Speed 与 Seek 时间）
+            // 1. 先更新各个动作图层中的双缓冲 Slot 播放器与 CrossFade 权重
             UpdateLayers(effectiveDelta);
 
             // 2. 后手动推进 PlayableGraph 采样（驱动子层级 Animator 采样并在 OnAnimatorMove 中分发 Root Motion）
             _playableGraph.Evaluate(effectiveDelta);
+
+            // 3. 上半身基准骨骼相对根节点解耦姿态修正（消除下半身骨盆奔跑倾斜与晃动，还原侧身/平刺等源动画真实朝向）
+            ApplyUpperBodySpineDecoupling();
         }
 
         private void OnDestroy()
@@ -277,20 +299,21 @@ namespace Cwcbb.Tools.CwcMontage
 
         /// <summary>
         /// 播放指定的蒙太奇配置资产。
-        /// 自动在指定图层进行双缓冲 CrossFade 平滑过渡。
+        /// 自动根据资产配置在 UpperBody、FullBody 与 Additive 通道分发插槽，
+        /// 执行平滑双缓冲 CrossFade 过渡与空隙自然交还控制权。
         /// </summary>
         /// <param name="montage">蒙太奇配置资产</param>
         /// <param name="customBlendInTime">自定义淡入时长（可选）</param>
         /// <param name="customBlendInCurve">自定义淡入曲线（可选）</param>
-        /// <returns>蒙太奇播放智能结构体句柄</returns>
+        /// <returns>主导图层对应的蒙太奇播放智能结构体句柄</returns>
         public MontageHandle Play(
             MontageSequenceSO montage,
             float? customBlendInTime = null,
             AnimationCurve customBlendInCurve = null)
         {
-            if (montage == null || montage.AnimationSegments == null || montage.AnimationSegments.Count == 0)
+            if (montage == null)
             {
-                Debug.LogWarning($"[MontageCoordinator] 物体 '{gameObject.name}' 无法播放：montage 为空或未配置任何动画片段 (AnimationSegments)。");
+                Debug.LogWarning($"[MontageCoordinator] 物体 '{gameObject.name}' 无法播放：montage 为空。");
                 return MontageHandle.Invalid;
             }
 
@@ -299,79 +322,9 @@ namespace Cwcbb.Tools.CwcMontage
                 InitializePlayableGraph();
             }
 
-            int targetLayerIndex = montage.AnimationLayer;
-            if (targetLayerIndex < 0 || targetLayerIndex >= _layerStates.Count)
-            {
-                Debug.LogWarning($"[MontageCoordinator] 物体 '{gameObject.name}' 播放蒙太奇 '{montage.name}' 时目标图层 {targetLayerIndex} 超出配置范围 (0 ~ {_layerStates.Count - 1})，将自动回退至 Layer 0。");
-                targetLayerIndex = 0;
-            }
-            var layerState = _layerStates[targetLayerIndex];
-
-            // 1. 确定双缓冲槽位 (Ping-Pong 交替切换)
-            int newSlotIndex = (layerState.ActiveSlotIndex == 0) ? 1 : 0;
-            int oldSlotIndex = (newSlotIndex == 0) ? 1 : 0;
-
-            var newSlot = (newSlotIndex == 0) ? layerState.Slot0 : layerState.Slot1;
-            var oldSlot = (oldSlotIndex == 0) ? layerState.Slot0 : layerState.Slot1;
-
             float blendInDuration = customBlendInTime ?? montage.DefaultBlendInTime;
 
-            // 2. 将旧 Slot 置为主动打断淡出状态
-            if (oldSlot.IsOccupied && oldSlot.Player.IsPlaying)
-            {
-                oldSlot.Player.Stop(blendInDuration);
-            }
-
-            // 3. 若新 Slot 仍然占有未完成的 Player（例如快速连续打断重用 Slot），强制 Terminate 并解绑事件
-            if (newSlot.IsOccupied)
-            {
-                if (!newSlot.Player.IsFinished)
-                {
-                    newSlot.Player.Terminate();
-                }
-                UnbindPlayerEvents(newSlot.Player);
-            }
-
-            // 4. 代际版本号自增（每次分发新动画自增，旧句柄瞬间失效）
-            newSlot.Generation++;
-            if (newSlot.Generation <= 0) newSlot.Generation = 1;
-
-            // 5. 清理新 Slot 原有遗留 Playable 连接
-            newSlot.DestroyPlayables(_playableGraph, layerState.LayerMixer);
-
-            // 6. 构建多片段内部 Mixer 并接入 Slot
-            var segments = montage.AnimationSegments;
-            int segCount = segments.Count;
-
-            var slotMixer = AnimationMixerPlayable.Create(_playableGraph, segCount);
-            newSlot.SlotMixer = slotMixer;
-            newSlot.SegmentPlayables.Clear();
-
-            for (int s = 0; s < segCount; s++)
-            {
-                var seg = segments[s];
-                var clipToUse = seg?.Clip;
-                var cp = clipToUse != null
-                    ? AnimationClipPlayable.Create(_playableGraph, clipToUse)
-                    : default;
-
-                if (cp.IsValid())
-                {
-                    cp.SetApplyFootIK(montage.IsFootIK);
-                    cp.SetSpeed(1.0f);
-                    slotMixer.ConnectInput(s, cp, 0);
-                }
-
-                slotMixer.SetInputWeight(s, s == 0 ? 1.0f : 0.0f);
-                newSlot.SegmentPlayables.Add(cp);
-            }
-
-            layerState.LayerMixer.ConnectInput(newSlot.SlotIndex, slotMixer, 0);
-            layerState.LayerMixer.SetInputWeight(newSlot.SlotIndex, 0.0f);
-
-            newSlot.Weight = 0.0f;
-
-            // 7. 实例化运行时播放器
+            // 1. 实例化单一权威时钟源播放器
             var player = new MontagePlayer(
                 montage,
                 gameObject,
@@ -381,25 +334,74 @@ namespace Cwcbb.Tools.CwcMontage
                 isPreview: false,
                 coordinator: this);
 
-            newSlot.Player = player;
-            layerState.ActiveSlotIndex = newSlotIndex;
-
-            // 注册生命周期回调
+            // 注册生命周期回调（单个 Player 实例仅注册一次）
             player.OnSectionEntered += HandleSectionEntered;
             player.OnFinished += HandlePlayerEnded;
             player.OnInterrupted += HandlePlayerEnded;
 
-            var handle = new MontageHandle(this, targetLayerIndex, newSlotIndex, newSlot.Generation);
-            OnMontageStarted?.Invoke(handle);
-            return handle;
+            bool hasFullBody = montage.HasAnyAnimationInChannel(MontageLayerChannel.FullBody);
+            bool hasUpperBody = montage.HasAnyAnimationInChannel(MontageLayerChannel.UpperBody);
+            bool hasAdditive = montage.HasAnyAnimationInChannel(MontageLayerChannel.Additive);
+
+            // 若所有通道均无动画片段但配置了表现轨道，保底在 FullBody 层挂载播放器以驱动事件时钟
+            if (!hasFullBody && !hasUpperBody && !hasAdditive)
+            {
+                hasFullBody = true;
+            }
+
+            MontageHandle mainHandle = MontageHandle.Invalid;
+
+            // 2. FullBody 霸权规则：若播放全身独占动作，主动通知旧 UpperBody 平滑打断淡出
+            if (hasFullBody)
+            {
+                StopActiveSlot(_layerStates[0], blendInDuration);
+            }
+
+            // 3. 通道分发挂载
+            if (hasFullBody)
+            {
+                var handle = SetupLayerSlot(_layerStates[1], montage.FullBodySegments, player, blendInDuration, montage.IsFootIK);
+                if (!mainHandle.IsValid) mainHandle = handle;
+            }
+
+            if (hasUpperBody)
+            {
+                var handle = SetupLayerSlot(_layerStates[0], montage.UpperBodySegments, player, blendInDuration, montage.IsFootIK);
+                if (!mainHandle.IsValid) mainHandle = handle;
+            }
+
+            if (hasAdditive)
+            {
+                var handle = SetupLayerSlot(_layerStates[2], montage.AdditiveSegments, player, blendInDuration, false);
+                if (!mainHandle.IsValid) mainHandle = handle;
+            }
+
+            // 4. 首帧对齐：在挂载完成后立即执行一次零时间步更新，确保图层权重与 Mixer 拓扑立即对齐生效
+            UpdateLayers(0f);
+
+            if (mainHandle.IsValid)
+            {
+                OnMontageStarted?.Invoke(mainHandle);
+            }
+
+            return mainHandle;
         }
 
         /// <summary>
-        /// 获取指定图层当前正在播放的活跃蒙太奇句柄。
+        /// 获取指定通道当前正在播放的活跃蒙太奇句柄。
         /// </summary>
-        /// <param name="layerIndex">图层索引（默认 0）</param>
-        /// <returns>蒙太奇播放智能句柄（若该图层未在播放则返回 MontageHandle.Invalid）</returns>
-        public MontageHandle GetActiveHandle(int layerIndex = 0)
+        /// <param name="channel">目标通道枚举</param>
+        public MontageHandle GetActiveHandle(MontageLayerChannel channel)
+        {
+            int index = (int)channel;
+            return GetActiveHandle(index);
+        }
+
+        /// <summary>
+        /// 获取指定图层索引当前正在播放的活跃蒙太奇句柄。
+        /// </summary>
+        /// <param name="layerIndex">图层索引（0: UpperBody, 1: FullBody, 2: Additive）</param>
+        public MontageHandle GetActiveHandle(int layerIndex = 1)
         {
             if (layerIndex < 0 || layerIndex >= _layerStates.Count) return MontageHandle.Invalid;
             var layer = _layerStates[layerIndex];
@@ -407,6 +409,14 @@ namespace Cwcbb.Tools.CwcMontage
             var slot = (layer.ActiveSlotIndex == 0) ? layer.Slot0 : layer.Slot1;
             if (!slot.IsOccupied || slot.Player == null || slot.Player.IsFinished) return MontageHandle.Invalid;
             return new MontageHandle(this, layerIndex, slot.SlotIndex, slot.Generation);
+        }
+
+        /// <summary>
+        /// 查询指定通道当前是否正处于蒙太奇播放状态。
+        /// </summary>
+        public bool IsPlayingChannel(MontageLayerChannel channel)
+        {
+            return IsPlayingLayer((int)channel);
         }
 
         /// <summary>
@@ -420,6 +430,14 @@ namespace Cwcbb.Tools.CwcMontage
             if (layer.ActiveSlotIndex < 0) return false;
             var slot = (layer.ActiveSlotIndex == 0) ? layer.Slot0 : layer.Slot1;
             return slot.IsOccupied && slot.Player != null && !slot.Player.IsFinished && (slot.Player.IsPlaying || slot.Weight > 0.0001f);
+        }
+
+        /// <summary>
+        /// 停止指定通道正在播放的蒙太奇。
+        /// </summary>
+        public void StopChannel(MontageLayerChannel channel, float blendOutTime = 0.15f)
+        {
+            StopLayer((int)channel, blendOutTime);
         }
 
         /// <summary>
@@ -456,6 +474,46 @@ namespace Cwcbb.Tools.CwcMontage
             {
                 StopLayer(i, blendOutTime);
             }
+        }
+
+        /// <summary>
+        /// 设置指定图层的运行时动态混合权重倍率 [0.0, 1.0]。
+        /// </summary>
+        /// <param name="layerIndex">图层索引（0: UpperBody, 1: FullBody, 2: Additive）</param>
+        /// <param name="weight">权重值 [0.0, 1.0]</param>
+        public void SetLayerWeight(int layerIndex, float weight)
+        {
+            if (layerIndex < 0 || layerIndex >= _layerStates.Count) return;
+            _layerStates[layerIndex].LayerWeight = Mathf.Clamp01(weight);
+        }
+
+        /// <summary>
+        /// 获取指定图层的运行时动态混合权重倍率。
+        /// </summary>
+        /// <param name="layerIndex">图层索引（0: UpperBody, 1: FullBody, 2: Additive）</param>
+        public float GetLayerWeight(int layerIndex)
+        {
+            if (layerIndex < 0 || layerIndex >= _layerStates.Count) return 1.0f;
+            return _layerStates[layerIndex].LayerWeight;
+        }
+
+        /// <summary>
+        /// 设置指定通道的运行时动态混合权重倍率 [0.0, 1.0]。
+        /// </summary>
+        /// <param name="channel">目标通道枚举</param>
+        /// <param name="weight">权重值 [0.0, 1.0]</param>
+        public void SetChannelWeight(MontageLayerChannel channel, float weight)
+        {
+            SetLayerWeight((int)channel, weight);
+        }
+
+        /// <summary>
+        /// 获取指定通道的运行时动态混合权重倍率。
+        /// </summary>
+        /// <param name="channel">目标通道枚举</param>
+        public float GetChannelWeight(MontageLayerChannel channel)
+        {
+            return GetLayerWeight((int)channel);
         }
 
         /// <summary>
@@ -528,18 +586,16 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
 
-        #region 初始化与图拓扑构建 (固定双缓冲槽)
+        #region 初始化与图拓扑构建 (固定人形四层)
 
         private void EnsureAnimator()
         {
-            // 1. 若 Inspector 中已显式配置，直接使用
             if (_animator != null)
             {
                 SetupAnimatorBinding();
                 return;
             }
 
-            // 2. 查找自身
             _animator = GetComponent<Animator>();
             if (_animator != null)
             {
@@ -547,7 +603,6 @@ namespace Cwcbb.Tools.CwcMontage
                 return;
             }
 
-            // 3. 仅查找第一层直接子物体（Direct Children，不递归孙代层级）
             int childCount = transform.childCount;
             for (int i = 0; i < childCount; i++)
             {
@@ -560,7 +615,6 @@ namespace Cwcbb.Tools.CwcMontage
                 }
             }
 
-            // 4. 未找到则输出明确错误日志，严禁静默添加虚拟组件或盲目保底
             Debug.LogError($"[MontageCoordinator] 物体 '{gameObject.name}' 未显式配置 Animator，且在自身或第一层子物体中均未找到 Animator 组件！", this);
         }
 
@@ -571,7 +625,6 @@ namespace Cwcbb.Tools.CwcMontage
             _originalController = _animator.runtimeAnimatorController;
             MontageBoneUtility.ResolveBones(gameObject, _animator, _cachedBones);
 
-            // 在 Animator 所在物体上挂载中介派发组件，拦截 Unity 原生 Root Motion 并转交 Coordinator
             _animatorDispatcher = _animator.GetComponent<MontageAnimatorDispatcher>();
             if (_animatorDispatcher == null)
             {
@@ -593,12 +646,13 @@ namespace Cwcbb.Tools.CwcMontage
 
             var playableOutput = AnimationPlayableOutput.Create(_playableGraph, "MontageOutput", _animator);
 
-            // 构建总混音器 (Input 0 为 Locomotion，Input 1 ~ N 为动作层)
-            int layerCount = _layers.Count > 0 ? _layers.Count : 1;
-            int totalInputs = layerCount + 1;
-            _topLevelMixer = AnimationLayerMixerPlayable.Create(_playableGraph, totalInputs);
+            // 固定四层拓扑：
+            // Input 0: Locomotion (基础状态机)
+            // Input 1: UpperBody (上半身配合移动，内置 Humanoid 遮罩)
+            // Input 2: FullBody (全身独占动作，霸权覆盖)
+            // Input 3: Additive (受击/抖动叠加，Additive = true)
+            _topLevelMixer = AnimationLayerMixerPlayable.Create(_playableGraph, 4);
 
-            // 接入基础 Locomotion（若 Controller 为空则保持安全连接）
             _animator.runtimeAnimatorController = null;
             _animator.applyRootMotion = true;
 
@@ -615,33 +669,39 @@ namespace Cwcbb.Tools.CwcMontage
                 _topLevelMixer.SetInputWeight(0, 0.0f);
             }
 
-            // 构建动作层的固定双缓冲槽 Mixer 拓扑
             _layerStates.Clear();
-            for (int i = 0; i < layerCount; i++)
-            {
-                var cfg = (i < _layers.Count) ? _layers[i] : new MontageLayerConfig { LayerWeight = 1.0f, IsAdditive = false };
-                var layerState = new LayerRuntimeState(i, cfg);
 
-                // 每个动作层固定创建拥有 2 个输入槽位的 AnimationMixerPlayable (Slot 0 和 Slot 1)
-                var layerMixer = AnimationMixerPlayable.Create(_playableGraph, 2);
-                layerState.LayerMixer = layerMixer;
+            // 1. UpperBody (Layer 0, Top Input 1)
+            var upperLayer = CreateLayerState(MontageLayerChannel.UpperBody, 0, 1);
+            var upperMask = _customUpperBodyMask != null ? _customUpperBodyMask : MontageMaskUtility.GetOrCreateHumanoidUpperBodyMask();
+            _topLevelMixer.SetLayerMaskFromAvatarMask(1, upperMask);
+            _topLevelMixer.SetLayerAdditive(1, false);
+            _layerStates.Add(upperLayer);
 
-                int topInputIndex = i + 1;
-                _topLevelMixer.ConnectInput(topInputIndex, layerMixer, 0);
-                _topLevelMixer.SetInputWeight(topInputIndex, 0.0f);
-                _topLevelMixer.SetLayerAdditive((uint)topInputIndex, cfg.IsAdditive);
+            // 2. FullBody (Layer 1, Top Input 2)
+            var fullLayer = CreateLayerState(MontageLayerChannel.FullBody, 1, 2);
+            _topLevelMixer.SetLayerAdditive(2, false);
+            _layerStates.Add(fullLayer);
 
-                if (cfg.AvatarMask != null)
-                {
-                    _topLevelMixer.SetLayerMaskFromAvatarMask((uint)topInputIndex, cfg.AvatarMask);
-                }
-
-                _layerStates.Add(layerState);
-            }
+            // 3. Additive (Layer 2, Top Input 3)
+            var addLayer = CreateLayerState(MontageLayerChannel.Additive, 2, 3);
+            _topLevelMixer.SetLayerAdditive(3, true);
+            _layerStates.Add(addLayer);
 
             playableOutput.SetSourcePlayable(_topLevelMixer);
             _playableGraph.Play();
             _isGraphInitialized = true;
+        }
+
+        private LayerRuntimeState CreateLayerState(MontageLayerChannel channel, int layerIndex, int topInputIndex)
+        {
+            var state = new LayerRuntimeState(channel, layerIndex, topInputIndex);
+            var layerMixer = AnimationMixerPlayable.Create(_playableGraph, 2);
+            state.LayerMixer = layerMixer;
+
+            _topLevelMixer.ConnectInput(topInputIndex, layerMixer, 0);
+            _topLevelMixer.SetInputWeight(topInputIndex, 0.0f);
+            return state;
         }
 
         private void CleanupPlayableGraph()
@@ -657,39 +717,157 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
 
-        #region 图更新与主从双缓冲混音计算 (Dominant Slot Blending)
+        #region 插槽配置与多通道分发辅助
+
+        private void StopActiveSlot(LayerRuntimeState layer, float blendOutDuration)
+        {
+            if (layer.ActiveSlotIndex < 0) return;
+            var slot = (layer.ActiveSlotIndex == 0) ? layer.Slot0 : layer.Slot1;
+            if (slot.IsOccupied && slot.Player.IsPlaying)
+            {
+                slot.Player.Stop(blendOutDuration);
+            }
+        }
+
+        private MontageHandle SetupLayerSlot(
+            LayerRuntimeState layerState,
+            List<MontageAnimationSegment> segments,
+            MontagePlayer player,
+            float blendInDuration,
+            bool isFootIK)
+        {
+            int newSlotIndex = (layerState.ActiveSlotIndex == 0) ? 1 : 0;
+            int oldSlotIndex = (newSlotIndex == 0) ? 1 : 0;
+
+            var newSlot = (newSlotIndex == 0) ? layerState.Slot0 : layerState.Slot1;
+            var oldSlot = (oldSlotIndex == 0) ? layerState.Slot0 : layerState.Slot1;
+
+            if (oldSlot.IsOccupied && oldSlot.Player.IsPlaying)
+            {
+                oldSlot.Player.Stop(blendInDuration);
+            }
+
+            if (newSlot.IsOccupied)
+            {
+                if (!newSlot.Player.IsFinished)
+                {
+                    newSlot.Player.Terminate();
+                }
+                UnbindPlayerEvents(newSlot.Player);
+            }
+
+            newSlot.Generation++;
+            if (newSlot.Generation <= 0) newSlot.Generation = 1;
+
+            newSlot.DestroyPlayables(_playableGraph, layerState.LayerMixer);
+
+            int segCount = segments != null ? segments.Count : 0;
+            var slotMixer = AnimationMixerPlayable.Create(_playableGraph, Mathf.Max(1, segCount));
+            newSlot.SlotMixer = slotMixer;
+            newSlot.SegmentPlayables.Clear();
+
+            for (int s = 0; s < segCount; s++)
+            {
+                var seg = segments[s];
+                var clipToUse = seg?.Clip;
+                var cp = clipToUse != null
+                    ? AnimationClipPlayable.Create(_playableGraph, clipToUse)
+                    : default;
+
+                if (cp.IsValid())
+                {
+                    cp.SetApplyFootIK(isFootIK);
+                    cp.SetSpeed(1.0f);
+                    slotMixer.ConnectInput(s, cp, 0);
+                }
+
+                slotMixer.SetInputWeight(s, s == 0 ? 1.0f : 0.0f);
+                newSlot.SegmentPlayables.Add(cp);
+            }
+
+            layerState.LayerMixer.ConnectInput(newSlot.SlotIndex, slotMixer, 0);
+            layerState.LayerMixer.SetInputWeight(newSlot.SlotIndex, 0.0f);
+
+            newSlot.Weight = 0.0f;
+            newSlot.HasActiveAnimation = false;
+            newSlot.Player = player;
+            layerState.ActiveSlotIndex = newSlotIndex;
+
+            return new MontageHandle(this, layerState.LayerIndex, newSlotIndex, newSlot.Generation);
+        }
+
+        #endregion
+
+        #region 图更新与通道动态混音计算 (空白区自然释放)
 
         private void UpdateLayers(float deltaTime)
         {
+            // 1. 收集并统一推进所有活跃 Player 的单一权威时钟与动作块扫掠（确保多通道共用时钟只推进一次）
+            _tickablePlayers.Clear();
+            for (int i = 0; i < _layerStates.Count; i++)
+            {
+                var layer = _layerStates[i];
+                if (layer.Slot0.IsOccupied && layer.Slot0.Player != null) _tickablePlayers.Add(layer.Slot0.Player);
+                if (layer.Slot1.IsOccupied && layer.Slot1.Player != null) _tickablePlayers.Add(layer.Slot1.Player);
+            }
+
+            foreach (var p in _tickablePlayers)
+            {
+                p.Tick(deltaTime);
+                p.SetCurrentWeight(0f);
+            }
+
+            // 2. 推进各图层 Slot 的骨骼姿态采样与动态权重归一化计算
             for (int i = 0; i < _layerStates.Count; i++)
             {
                 var layer = _layerStates[i];
                 var mixer = layer.LayerMixer;
 
-                // 1. 推进各 Slot 的 Player 状态与底层 Playable 同步
-                UpdateSlotPlayer(layer.Slot0, deltaTime);
-                UpdateSlotPlayer(layer.Slot1, deltaTime);
+                UpdateSlotClips(layer, layer.Slot0);
+                UpdateSlotClips(layer, layer.Slot1);
 
-                // 2. 主导槽与从属槽权重计算 (Dominant Slot Blending)
                 SlotState activeSlot = (layer.ActiveSlotIndex == 0) ? layer.Slot0 : layer.Slot1;
                 SlotState fadingSlot = (layer.ActiveSlotIndex == 0) ? layer.Slot1 : layer.Slot0;
 
-                float activeRawWeight = activeSlot.IsOccupied ? activeSlot.Player.CalculateTargetWeight() : 0f;
-                float fadingRawWeight = fadingSlot.IsOccupied ? fadingSlot.Player.CalculateTargetWeight() : 0f;
-                float fadingWeight = Mathf.Min(fadingRawWeight, Mathf.Max(0f, 1f - activeRawWeight));
+                // 【核心重构】：只有当前处于活跃动画片段覆盖内（HasActiveAnimation），才具有姿态权重！
+                // 结合片段自身当前的淡入淡出（BlendIn/BlendOut）包络权重乘数，实现平滑进入与退出，杜绝姿态突变硬切！
+                float activeRawWeight = (activeSlot.IsOccupied && activeSlot.HasActiveAnimation)
+                    ? activeSlot.Player.CalculateTargetWeight() * activeSlot.CurrentSegmentWeightMultiplier
+                    : 0f;
+                float fadingRawWeight = (fadingSlot.IsOccupied && fadingSlot.HasActiveAnimation)
+                    ? fadingSlot.Player.CalculateTargetWeight() * fadingSlot.CurrentSegmentWeightMultiplier
+                    : 0f;
 
+                float fadingWeight = Mathf.Min(fadingRawWeight, Mathf.Max(0f, 1f - activeRawWeight));
                 activeSlot.Weight = activeRawWeight;
                 fadingSlot.Weight = fadingWeight;
 
-                if (activeSlot.IsOccupied) activeSlot.Player.SetCurrentWeight(activeRawWeight);
-                if (fadingSlot.IsOccupied) fadingSlot.Player.SetCurrentWeight(fadingWeight);
-
-                // 3. 子层 Mixer 相对归一化：保证 LayerMixer 内部输入权重和为 1.0（当有动画在播放时），输出 100% 满姿态插值，彻底杜绝 BindPose 污染
-                float totalLayerWeight = activeRawWeight + fadingWeight;
-                if (totalLayerWeight > 0.0001f)
+                if (activeSlot.IsOccupied && activeSlot.Player != null)
                 {
-                    mixer.SetInputWeight(activeSlot.SlotIndex, activeRawWeight / totalLayerWeight);
-                    mixer.SetInputWeight(fadingSlot.SlotIndex, fadingWeight / totalLayerWeight);
+                    float maxW = Mathf.Max(activeSlot.Player.CurrentWeight, activeRawWeight);
+                    activeSlot.Player.SetCurrentWeight(maxW);
+                }
+                if (fadingSlot.IsOccupied && fadingSlot.Player != null)
+                {
+                    float maxW = Mathf.Max(fadingSlot.Player.CurrentWeight, fadingWeight);
+                    fadingSlot.Player.SetCurrentWeight(maxW);
+                }
+
+                float activeAssetWeight = (activeSlot.IsOccupied && activeSlot.Player?.Sequence != null)
+                    ? activeSlot.Player.Sequence.GetChannelWeight(layer.Channel)
+                    : 1.0f;
+                float fadingAssetWeight = (fadingSlot.IsOccupied && fadingSlot.Player?.Sequence != null)
+                    ? fadingSlot.Player.Sequence.GetChannelWeight(layer.Channel)
+                    : 1.0f;
+
+                float effectiveActiveWeight = activeRawWeight * activeAssetWeight;
+                float effectiveFadingWeight = fadingWeight * fadingAssetWeight;
+
+                float combinedWeight = effectiveActiveWeight + effectiveFadingWeight;
+                if (combinedWeight > 0.0001f)
+                {
+                    mixer.SetInputWeight(activeSlot.SlotIndex, effectiveActiveWeight / combinedWeight);
+                    mixer.SetInputWeight(fadingSlot.SlotIndex, effectiveFadingWeight / combinedWeight);
                 }
                 else
                 {
@@ -697,31 +875,39 @@ namespace Cwcbb.Tools.CwcMontage
                     mixer.SetInputWeight(fadingSlot.SlotIndex, 0f);
                 }
 
-                // 4. 更新 TopLevelMixer 中该 Layer 的总权重（控制该图层与底层 Locomotion 状态机的平滑淡入淡出）
-                float cfgWeight = (layer.Config.LayerWeight > 0.0001f) ? layer.Config.LayerWeight : 1.0f;
-                float effectiveLayerWeight = Mathf.Clamp01(totalLayerWeight) * Mathf.Clamp01(cfgWeight);
-                _topLevelMixer.SetInputWeight(i + 1, effectiveLayerWeight);
+                // 更新 TopLevelMixer 输入权重（结合蒙太奇资产层权重与运行时动态层权重倍率）
+                float finalTopLayerWeight = combinedWeight * layer.LayerWeight;
+                _topLevelMixer.SetInputWeight(layer.TopLevelInputIndex, Mathf.Clamp01(finalTopLayerWeight));
 
-                // 5. 释放已结束且权重归零的 Slot
+                // 释放彻底结束且权重归零的 Slot
                 CheckAndReleaseSlot(layer.Slot0, mixer);
                 CheckAndReleaseSlot(layer.Slot1, mixer);
             }
         }
 
-        private void UpdateSlotPlayer(SlotState slot, float deltaTime)
+        private void UpdateSlotClips(LayerRuntimeState layer, SlotState slot)
         {
             if (!slot.IsOccupied)
             {
                 slot.Weight = 0f;
+                slot.HasActiveAnimation = false;
+                slot.CurrentSegmentWeightMultiplier = 0f;
                 return;
             }
 
             var player = slot.Player;
-            player.Tick(deltaTime);
 
             if (slot.SlotMixer.IsValid() && slot.SegmentPlayables.Count > 0)
             {
-                player.EvaluateAnimationSegments(slot.TempEvalIndices, slot.TempEvalTimes, slot.TempEvalWeights);
+                player.EvaluateChannelSegments(layer.Channel, slot.TempEvalIndices, slot.TempEvalTimes, slot.TempEvalWeights);
+                slot.HasActiveAnimation = (slot.TempEvalIndices.Count > 0);
+
+                float totalSegWeight = 0f;
+                for (int w = 0; w < slot.TempEvalWeights.Count; w++)
+                {
+                    totalSegWeight += slot.TempEvalWeights[w];
+                }
+                slot.CurrentSegmentWeightMultiplier = Mathf.Clamp01(totalSegWeight);
 
                 int count = slot.SegmentPlayables.Count;
                 for (int i = 0; i < count; i++)
@@ -729,6 +915,8 @@ namespace Cwcbb.Tools.CwcMontage
                     slot.SlotMixer.SetInputWeight(i, 0.0f);
                 }
 
+                // 【核心修复】：将片段权重归一化输入给 SlotMixer，确保 SlotMixer 内部总和恒为 1.0f！
+                // 绝对杜绝 AnimationMixerPlayable 因总权重不足 1.0f 自动混入未初始化的 BindPose 0 姿态（半蹲/蜷缩贴地）！
                 for (int k = 0; k < slot.TempEvalIndices.Count; k++)
                 {
                     int segIdx = slot.TempEvalIndices[k];
@@ -740,9 +928,15 @@ namespace Cwcbb.Tools.CwcMontage
                             cp.SetTime(slot.TempEvalTimes[k]);
                             cp.SetSpeed(1.0f);
                         }
-                        slot.SlotMixer.SetInputWeight(segIdx, slot.TempEvalWeights[k]);
+                        float normalizedW = totalSegWeight > 0.0001f ? (slot.TempEvalWeights[k] / totalSegWeight) : 0f;
+                        slot.SlotMixer.SetInputWeight(segIdx, normalizedW);
                     }
                 }
+            }
+            else
+            {
+                slot.HasActiveAnimation = false;
+                slot.CurrentSegmentWeightMultiplier = 0f;
             }
         }
 
@@ -751,7 +945,6 @@ namespace Cwcbb.Tools.CwcMontage
             if (!slot.IsOccupied) return;
 
             var player = slot.Player;
-            // 只有当播放器彻底标记为 Finished 且在混音器中的实际权重归零时，才安全销毁 Playable 并释放 Slot
             if (player.IsFinished && slot.Weight <= 0.0001f)
             {
                 slot.DestroyPlayables(_playableGraph, mixer);
@@ -760,18 +953,153 @@ namespace Cwcbb.Tools.CwcMontage
             }
         }
 
+        private void ApplyUpperBodySpineDecoupling()
+        {
+            if (_animator == null || !_animator.isHuman || _layerStates.Count <= 0) return;
+
+            // 0. 若 FullBody (Layer 1) 正在播放且具有有效权重，FullBody 拥有霸权主导权，严禁篡改 Spine！
+            if (_layerStates.Count > 1)
+            {
+                var fullLayer = _layerStates[1];
+                if (fullLayer.ActiveSlotIndex >= 0)
+                {
+                    var fullSlot = (fullLayer.ActiveSlotIndex == 0) ? fullLayer.Slot0 : fullLayer.Slot1;
+                    if (fullSlot.IsOccupied && fullSlot.HasActiveAnimation && fullSlot.Weight > 0.0001f)
+                    {
+                        return;
+                    }
+                }
+            }
+
+            var upperLayer = _layerStates[0];
+            if (upperLayer.ActiveSlotIndex < 0) return;
+
+            SlotState activeSlot = (upperLayer.ActiveSlotIndex == 0) ? upperLayer.Slot0 : upperLayer.Slot1;
+            if (!activeSlot.IsOccupied || activeSlot.Player == null || activeSlot.Player.IsFinished) return;
+            if (!activeSlot.HasActiveAnimation || activeSlot.Weight <= 0.0001f) return;
+
+            var montage = activeSlot.Player.Sequence;
+            if (montage == null || !montage.DecoupleUpperBodyOrientation) return;
+
+            var upperSegments = montage.UpperBodySegments;
+            if (upperSegments == null || upperSegments.Count == 0 || activeSlot.TempEvalIndices.Count == 0) return;
+
+            // 严格采用 Animator 的 Transform 作为根参考系，确保与 Dummy 采样基准完全处于同一局部坐标空间
+            Transform root = _animator != null ? _animator.transform : transform;
+            Transform hips = _cachedBones[(int)MontageTargetBone.Hips];
+            Transform spine = _cachedBones[(int)MontageTargetBone.Spine];
+            if (root == null || hips == null || spine == null) return;
+
+            // 1. 动态获取源动画在当前时刻基准骨骼相对根节点的合成朝向 Q_Target
+            Quaternion targetSpineInRoot = Quaternion.identity;
+            float totalWeight = 0f;
+
+            for (int k = 0; k < activeSlot.TempEvalIndices.Count; k++)
+            {
+                int segIdx = activeSlot.TempEvalIndices[k];
+                if (segIdx >= 0 && segIdx < upperSegments.Count)
+                {
+                    var seg = upperSegments[segIdx];
+                    if (seg?.Clip != null)
+                    {
+                        var track = MontageSpineDecoupleUtility.GetOrCreateTrack(seg.Clip, _animator);
+                        if (track != null)
+                        {
+                            Quaternion sample = track.Evaluate(activeSlot.TempEvalTimes[k]);
+                            float w = activeSlot.TempEvalWeights[k];
+                            if (totalWeight <= 0.0001f)
+                            {
+                                targetSpineInRoot = sample;
+                                totalWeight = w;
+                            }
+                            else
+                            {
+                                float blendT = w / (totalWeight + w);
+                                targetSpineInRoot = Quaternion.Slerp(targetSpineInRoot, sample, blendT);
+                                totalWeight += w;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (totalWeight <= 0.0001f) return;
+
+            // 2. 核心解耦反解：计算 Spine 在当前 Hips 下的基础局部旋转，使得 Spine 世界朝向精确锁定为角色根空间下的 targetSpineInRoot
+            Quaternion targetSpineWorld = root.rotation * targetSpineInRoot;
+            Quaternion decoupledLocal = Quaternion.Inverse(hips.rotation) * targetSpineWorld;
+
+            // 3. 复合叠加层（Additive）姿态增量：确保解耦行为只限于 UpperBody，Additive 的受击/开火抖动平滑叠加在解耦姿态之上，杜绝脊柱断裂
+            Quaternion finalDecoupledLocal = decoupledLocal;
+            if (_layerStates.Count > 2)
+            {
+                var addLayer = _layerStates[2];
+                float addTopWeight = _topLevelMixer.GetInputWeight(addLayer.TopLevelInputIndex);
+                if (addTopWeight > 0.0001f && addLayer.ActiveSlotIndex >= 0)
+                {
+                    var addSlot = (addLayer.ActiveSlotIndex == 0) ? addLayer.Slot0 : addLayer.Slot1;
+                    if (addSlot.IsOccupied && addSlot.HasActiveAnimation && addSlot.TempEvalIndices.Count > 0 && addSlot.Player?.Sequence != null)
+                    {
+                        var addSegments = addSlot.Player.Sequence.AdditiveSegments;
+                        Quaternion additiveSpineDelta = Quaternion.identity;
+                        float addTotalWeight = 0f;
+
+                        for (int a = 0; a < addSlot.TempEvalIndices.Count; a++)
+                        {
+                            int addSegIdx = addSlot.TempEvalIndices[a];
+                            if (addSegIdx >= 0 && addSegIdx < addSegments.Count)
+                            {
+                                var seg = addSegments[addSegIdx];
+                                if (seg?.Clip != null)
+                                {
+                                    var addTrack = MontageSpineDecoupleUtility.GetOrCreateAdditiveTrack(seg.Clip, _animator);
+                                    if (addTrack != null)
+                                    {
+                                        Quaternion sample = addTrack.Evaluate(addSlot.TempEvalTimes[a]);
+                                        float w = addSlot.TempEvalWeights[a];
+                                        if (addTotalWeight <= 0.0001f)
+                                        {
+                                            additiveSpineDelta = sample;
+                                            addTotalWeight = w;
+                                        }
+                                        else
+                                        {
+                                            float blendT = w / (addTotalWeight + w);
+                                            additiveSpineDelta = Quaternion.Slerp(additiveSpineDelta, sample, blendT);
+                                            addTotalWeight += w;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (addTotalWeight > 0.0001f)
+                        {
+                            float effectiveAddWeight = Mathf.Clamp01(addTopWeight * addTotalWeight);
+                            Quaternion appliedDelta = Quaternion.Slerp(Quaternion.identity, additiveSpineDelta, effectiveAddWeight);
+                            finalDecoupledLocal = decoupledLocal * appliedDelta;
+                        }
+                    }
+                }
+            }
+
+            // 4. 结合当前 UpperBody 层的实际混合权重平滑插值（处理淡入、淡出与空白区过渡，0 抽搐）
+            float blendWeight = Mathf.Clamp01(activeSlot.Weight * montage.UpperBodyWeight * upperLayer.LayerWeight);
+            spine.localRotation = Quaternion.Slerp(spine.localRotation, finalDecoupledLocal, blendWeight);
+        }
+
         #endregion
 
         #region Root Motion 采样与解耦分发
 
         private void HandleAnimatorMove(Vector3 deltaPosition, Quaternion deltaRotation)
         {
-            var layer0 = _layerStates.Count > 0 ? _layerStates[0] : null;
-            if (layer0 == null) return;
+            // FullBody (Layer 1) 拥有对 Root Motion 的最高主导权
+            var fullBodyLayer = _layerStates.Count > 1 ? _layerStates[1] : null;
+            if (fullBodyLayer == null) return;
 
-            // 查找当前 Layer 0 中实际贡献权重的主导 Player
-            SlotState activeSlot = (layer0.ActiveSlotIndex == 0) ? layer0.Slot0 : layer0.Slot1;
-            SlotState fadingSlot = (layer0.ActiveSlotIndex == 0) ? layer0.Slot1 : layer0.Slot0;
+            SlotState activeSlot = (fullBodyLayer.ActiveSlotIndex == 0) ? fullBodyLayer.Slot0 : fullBodyLayer.Slot1;
+            SlotState fadingSlot = (fullBodyLayer.ActiveSlotIndex == 0) ? fullBodyLayer.Slot1 : fullBodyLayer.Slot0;
 
             MontagePlayer dominantPlayer = null;
             if (activeSlot.IsOccupied && activeSlot.Player.IsPlaying && activeSlot.Weight > 0.0001f)
@@ -794,7 +1122,6 @@ namespace Cwcbb.Tools.CwcMontage
             {
                 var so = dominantPlayer.SourceAsset;
 
-                // 根据主导蒙太奇配置进行分量掩码过滤
                 if (so.ApplyHorizontalRootMotion)
                 {
                     appliedDeltaPos.x = deltaPosition.x;
@@ -810,12 +1137,11 @@ namespace Cwcbb.Tools.CwcMontage
             }
             else
             {
-                // 无活跃蒙太奇时，直接放行底层 Locomotion 的原生 Root Motion
+                // 无活跃全身蒙太奇时，直接放行底层 Locomotion 的原生 Root Motion
                 appliedDeltaPos = deltaPosition;
                 appliedDeltaRot = deltaRotation;
             }
 
-            // 1. 通过接口分发（供角色移动控制器按需实现）
             if (_cachedReceiver != null)
             {
                 if (appliedDeltaPos != Vector3.zero)
@@ -829,7 +1155,6 @@ namespace Cwcbb.Tools.CwcMontage
                 }
             }
 
-            // 2. 通过 C# 事件委托广播分发（供外部移动组件按需订阅和二次限制过滤）
             if (appliedDeltaPos != Vector3.zero || appliedDeltaRot != Quaternion.identity)
             {
                 OnRootMotionDelta?.Invoke(appliedDeltaPos, appliedDeltaRot);
@@ -898,9 +1223,6 @@ namespace Cwcbb.Tools.CwcMontage
 
         #region 句柄安全分发与代际校验 (Handle Dispatchers)
 
-        /// <summary>
-        /// 活跃播放器安全校验（要求未完成且代际完全匹配，用于受控修改指令与活跃播放状态查询）。
-        /// </summary>
         private bool TryGetValidPlayer(int layerIndex, int slotIndex, int generation, out MontagePlayer player)
         {
             player = null;
@@ -918,9 +1240,6 @@ namespace Cwcbb.Tools.CwcMontage
             return true;
         }
 
-        /// <summary>
-        /// 槽位播放器实例安全校验（只要槽位被占有且代际匹配即可，支持在结束结算时安全读取静态资产与时长元数据）。
-        /// </summary>
         private bool TryGetSlotPlayer(int layerIndex, int slotIndex, int generation, out MontagePlayer player)
         {
             player = null;
@@ -965,7 +1284,24 @@ namespace Cwcbb.Tools.CwcMontage
 
         internal float GetHandleWeight(int layerIndex, int slotIndex, int generation)
         {
-            return TryGetValidPlayer(layerIndex, slotIndex, generation, out var player) ? player.CurrentWeight : 0f;
+            if (layerIndex >= 0 && layerIndex < _layerStates.Count)
+            {
+                var layer = _layerStates[layerIndex];
+                var slot = (slotIndex == 0) ? layer.Slot0 : layer.Slot1;
+                if (slot.IsOccupied && slot.Generation == generation && slot.Player != null && !slot.Player.IsFinished)
+                {
+                    return slot.Weight;
+                }
+            }
+            return 0f;
+        }
+
+        internal void SetHandleWeight(int layerIndex, int slotIndex, int generation, float weight)
+        {
+            if (TryGetValidPlayer(layerIndex, slotIndex, generation, out var player))
+            {
+                player.SetCustomWeight(weight);
+            }
         }
 
         internal float GetHandleTotalDuration(int layerIndex, int slotIndex, int generation)

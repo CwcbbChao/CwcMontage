@@ -12,6 +12,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: e2a3c0759d53a0e4f9951403c23edb75, type: 3}
   m_Name: Demo_Roll
   m_EditorClassIdentifier: 
+  _enableUpperBodyTrack: 0
+  _upperBodyWeight: 1
+  _upperBodySegments: []
+  _fullBodyWeight: 1
   _animationSegments:
   - _clip: {fileID: 3031411921458128146, guid: a0ee339482ca65344a511b7983d67fd8, type: 3}
     _startTime: 0
@@ -42,6 +46,60 @@ MonoBehaviour:
       m_PreInfinity: 2
       m_PostInfinity: 2
       m_RotationOrder: 4
+    _blendInTime: 0.05
+    _blendOutTime: 0.05
+    _blendInCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+    _blendOutCurve:
+      serializedVersion: 2
+      m_Curve:
+      - serializedVersion: 3
+        time: 0
+        value: 0
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      - serializedVersion: 3
+        time: 1
+        value: 1
+        inSlope: 0
+        outSlope: 0
+        tangentMode: 0
+        weightedMode: 0
+        inWeight: 0
+        outWeight: 0
+      m_PreInfinity: 2
+      m_PostInfinity: 2
+      m_RotationOrder: 4
+  _enableAdditiveTrack: 0
+  _additiveWeight: 1
+  _additiveSegments: []
+  _decoupleUpperBodyOrientation: 1
   _animationLayer: 0
   _basePlayRate: 1
   _isLooping: 0

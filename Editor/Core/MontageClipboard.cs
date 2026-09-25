@@ -12,6 +12,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private static MontageActionBlockData s_copiedActionBlock;
         private static MontageTrackData s_copiedTrack;
+        private static MontageAnimationSegment s_copiedSegment;
 
         #endregion
 
@@ -26,6 +27,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         /// 剪贴板中是否存在已复制的轨道。
         /// </summary>
         public static bool HasCopiedTrack => s_copiedTrack != null;
+
+        /// <summary>
+        /// 剪贴板中是否存在已复制的动画片段。
+        /// </summary>
+        public static bool HasCopiedSegment => s_copiedSegment != null;
 
         #endregion
 
@@ -80,12 +86,37 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         }
 
         /// <summary>
+        /// 将指定动画片段深拷贝存入剪贴板。
+        /// </summary>
+        /// <param name="segment">源动画片段数据</param>
+        public static void CopySegment(MontageAnimationSegment segment)
+        {
+            if (segment == null)
+            {
+                s_copiedSegment = null;
+                return;
+            }
+
+            s_copiedSegment = segment.Clone();
+        }
+
+        /// <summary>
+        /// 从剪贴板获取深拷贝的动画片段副本。
+        /// </summary>
+        /// <returns>动画片段克隆实例</returns>
+        public static MontageAnimationSegment GetClonedSegment()
+        {
+            return s_copiedSegment?.Clone();
+        }
+
+        /// <summary>
         /// 清空剪贴板内容。
         /// </summary>
         public static void Clear()
         {
             s_copiedActionBlock = null;
             s_copiedTrack = null;
+            s_copiedSegment = null;
         }
 
         #endregion

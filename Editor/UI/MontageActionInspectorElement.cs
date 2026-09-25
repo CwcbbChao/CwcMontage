@@ -559,12 +559,28 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             titleGroup.style.flexDirection = FlexDirection.Row;
             titleGroup.style.alignItems = Align.Center;
 
+            MontageLayerChannel channel = MontageLayerChannel.FullBody;
+            List<MontageAnimationSegment> channelSegments = asset.FullBodySegments;
+            if (asset.UpperBodySegments != null && asset.UpperBodySegments.Contains(segment))
+            {
+                channel = MontageLayerChannel.UpperBody;
+                channelSegments = asset.UpperBodySegments;
+            }
+            else if (asset.AdditiveSegments != null && asset.AdditiveSegments.Contains(segment))
+            {
+                channel = MontageLayerChannel.Additive;
+                channelSegments = asset.AdditiveSegments;
+            }
+
+            int actualIndex = channelSegments != null ? channelSegments.IndexOf(segment) : segmentIndex;
+            if (actualIndex < 0) actualIndex = segmentIndex;
+
             string clipTitle = segment.Clip != null ? segment.Clip.name : "No Clip";
-            var typeLabel = new Label($"Segment #{segmentIndex + 1}: {clipTitle}");
+            var typeLabel = new Label($"Segment #{actualIndex + 1}: {clipTitle}");
             typeLabel.AddToClassList("montage-inspector-banner-title");
             titleGroup.Add(typeLabel);
 
-            var segmentBadge = new Label($"Animation Track | {segment.StartTime:F2}s - {segment.EndTime:F2}s");
+            var segmentBadge = new Label($"{channel} Track | {segment.StartTime:F2}s - {segment.EndTime:F2}s");
             segmentBadge.AddToClassList("montage-inspector-target-badge");
             titleGroup.Add(segmentBadge);
 
@@ -694,32 +710,101 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
             _actionContainer.Add(trimFoldout);
 
-            // 5. 交叉混合设置 (Crossfade Blending)
-            var blendFoldout = new Foldout { text = "Crossfade Blending", value = true };
+            // 5. 片段图层强度包络 (Layer Fade Envelope)
+            var fadeFoldout = new Foldout { text = "Layer Intensity Envelope (Fade In / Out)", value = true };
+            fadeFoldout.AddToClassList("montage-inspector-foldout");
+
+            var envHint = new Label("Controls layer blending intensity against base locomotion layers (useful for Additive or standalone segments).");
+            envHint.AddToClassList("montage-inspector-time-hint");
+            fadeFoldout.Add(envHint);
+
+            var blendInField = new FloatField("Fade In Time (s)") { value = segment.BlendInTime };
+            blendInField.tooltip = "Smooth fade-in duration (seconds) when entering segment.";
+            blendInField.RegisterValueChangedCallback(evt =>
+            {
+                Undo.RecordObject(asset, "Change Segment Fade In Time");
+                segment.BlendInTime = Mathf.Max(0f, evt.newValue);
+                EditorUtility.SetDirty(asset);
+                OnDataModified?.Invoke();
+            });
+            fadeFoldout.Add(blendInField);
+
+            var blendOutField = new FloatField("Fade Out Time (s)") { value = segment.BlendOutTime };
+            blendOutField.tooltip = "Smooth fade-out duration (seconds) before segment ends.";
+            blendOutField.RegisterValueChangedCallback(evt =>
+            {
+                Undo.RecordObject(asset, "Change Segment Fade Out Time");
+                segment.BlendOutTime = Mathf.Max(0f, evt.newValue);
+                EditorUtility.SetDirty(asset);
+                OnDataModified?.Invoke();
+            });
+            fadeFoldout.Add(blendOutField);
+
+            var blendInCurveField = new CurveField("Fade In Curve") { value = segment.BlendInCurve };
+            blendInCurveField.tooltip = "Interpolation curve for layer fade in.";
+            blendInCurveField.RegisterValueChangedCallback(evt =>
+            {
+                Undo.RecordObject(asset, "Change Segment Fade In Curve");
+                segment.BlendInCurve = evt.newValue;
+                EditorUtility.SetDirty(asset);
+                OnDataModified?.Invoke();
+            });
+            fadeFoldout.Add(blendInCurveField);
+
+            var blendOutCurveField = new CurveField("Fade Out Curve") { value = segment.BlendOutCurve };
+            blendOutCurveField.tooltip = "Interpolation curve for layer fade out.";
+            blendOutCurveField.RegisterValueChangedCallback(evt =>
+            {
+                Undo.RecordObject(asset, "Change Segment Fade Out Curve");
+                segment.BlendOutCurve = evt.newValue;
+                EditorUtility.SetDirty(asset);
+                OnDataModified?.Invoke();
+            });
+            fadeFoldout.Add(blendOutCurveField);
+
+            _actionContainer.Add(fadeFoldout);
+
+            // 6. 与前一片段的切入交叉过渡 (Incoming Crossfade Transition)
+            var blendFoldout = new Foldout { text = "Incoming Crossfade (Transition from Previous)", value = true };
             blendFoldout.AddToClassList("montage-inspector-foldout");
 
-            // 计算该片段与前一片段在时间轴上的实际物理重叠时长
+            // 计算该片段与同通道前一片段在时间轴上的实际物理重叠时长
             float prevOverlap = 0f;
-            if (segmentIndex > 0 && asset.AnimationSegments != null && segmentIndex < asset.AnimationSegments.Count)
+            MontageAnimationSegment prevSeg = null;
+            if (channelSegments != null && actualIndex > 0 && actualIndex < channelSegments.Count)
             {
-                var prevSeg = asset.AnimationSegments[segmentIndex - 1];
+                prevSeg = channelSegments[actualIndex - 1];
                 if (prevSeg != null && prevSeg.EndTime > segment.StartTime)
                 {
                     prevOverlap = Mathf.Max(0f, prevSeg.EndTime - segment.StartTime);
                 }
             }
 
-            var overlapHint = prevOverlap > 0.0001f
-                ? new Label($"Overlap Duration: {prevOverlap:F2}s (Crossfade active)")
-                : new Label("No overlap with previous segment. Drag segments to overlap for crossfade.");
+            string overlapStatusText;
+            if (actualIndex == 0)
+            {
+                overlapStatusText = "First segment in track. (Incoming crossfade only activates when overlapping a preceding segment).";
+            }
+            else if (prevOverlap > 0.0001f)
+            {
+                string prevClipName = prevSeg?.Clip != null ? prevSeg.Clip.name : $"Segment #{actualIndex}";
+                overlapStatusText = $"Active with preceding #{actualIndex} '{prevClipName}': {prevOverlap:F2}s overlap.\nThis curve determines how THIS segment fades in while the preceding segment decays (1.0 - Curve).";
+            }
+            else
+            {
+                string prevClipName = prevSeg?.Clip != null ? prevSeg.Clip.name : $"Segment #{actualIndex}";
+                overlapStatusText = $"No overlap with preceding #{actualIndex} '{prevClipName}'. Drag segments to overlap on timeline to enable crossfade.";
+            }
+
+            var overlapHint = new Label(overlapStatusText);
             overlapHint.AddToClassList("montage-inspector-time-hint");
             blendFoldout.Add(overlapHint);
 
-            var curveField = new CurveField("Blend Curve") { value = segment.BlendCurve };
-            curveField.tooltip = "Interpolation curve during timeline crossfade overlap.";
+            var curveField = new CurveField("Incoming Blend Curve") { value = segment.BlendCurve };
+            curveField.tooltip = "Transition curve when THIS segment takes over from the preceding segment. The preceding segment decays using (1.0 - Curve).";
             curveField.RegisterValueChangedCallback(evt =>
             {
-                Undo.RecordObject(asset, "Change Segment Blend Curve");
+                Undo.RecordObject(asset, "Change Segment Incoming Blend Curve");
                 segment.BlendCurve = evt.newValue;
                 EditorUtility.SetDirty(asset);
                 OnDataModified?.Invoke();
@@ -780,20 +865,46 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 });
             }
 
-            // 1. Animation Base Foldout
+            // 1. Animation Base Foldout (动画整体设置置于首位)
             var foldoutGeneral = new Foldout { text = "Animation Base", value = true };
             foldoutGeneral.AddToClassList("montage-inspector-foldout");
 
-            var layerProp = _serializedAsset.FindProperty("_animationLayer");
             var rateProp = _serializedAsset.FindProperty("_basePlayRate");
             var loopProp = _serializedAsset.FindProperty("_isLooping");
             var ikProp = _serializedAsset.FindProperty("_isFootIK");
 
-            if (layerProp != null) { var f = new PropertyField(layerProp); BindSettingField(f); foldoutGeneral.Add(f); }
             if (rateProp != null) { var f = new PropertyField(rateProp); BindSettingField(f); foldoutGeneral.Add(f); }
             if (loopProp != null) { var f = new PropertyField(loopProp); BindSettingField(f); foldoutGeneral.Add(f); }
             if (ikProp != null) { var f = new PropertyField(ikProp); BindSettingField(f); foldoutGeneral.Add(f); }
             _assetSettingsContainer.Add(foldoutGeneral);
+
+            // 2. Animation Layers Foldout (三大动画层级与权重配置，按小标题清晰分区)
+            var foldoutLayers = new Foldout { text = "Animation Layers", value = true };
+            foldoutLayers.AddToClassList("montage-inspector-foldout");
+
+            var enableUpperProp = _serializedAsset.FindProperty("_enableUpperBodyTrack");
+            var upperWeightProp = _serializedAsset.FindProperty("_upperBodyWeight");
+            var decoupleProp = _serializedAsset.FindProperty("_decoupleUpperBodyOrientation");
+            var fullWeightProp = _serializedAsset.FindProperty("_fullBodyWeight");
+            var enableAddProp = _serializedAsset.FindProperty("_enableAdditiveTrack");
+            var addWeightProp = _serializedAsset.FindProperty("_additiveWeight");
+
+            // Layer 1: UpperBody 小节
+            foldoutLayers.Add(CreateLayerSubHeader("Layer 1: UpperBody", isFirst: true));
+            if (enableUpperProp != null) { var f = new PropertyField(enableUpperProp, "Enable UpperBody (Layer 1)"); BindSettingField(f); foldoutLayers.Add(f); }
+            if (upperWeightProp != null) { var f = new PropertyField(upperWeightProp, "UpperBody Weight"); BindSettingField(f); foldoutLayers.Add(f); }
+            if (decoupleProp != null) { var f = new PropertyField(decoupleProp, "Decouple UpperBody Spine"); BindSettingField(f); foldoutLayers.Add(f); }
+
+            // Layer 2: FullBody (Master) 小节
+            foldoutLayers.Add(CreateLayerSubHeader("Layer 2: FullBody (Master)", isFirst: false));
+            if (fullWeightProp != null) { var f = new PropertyField(fullWeightProp, "FullBody Weight (Master)"); BindSettingField(f); foldoutLayers.Add(f); }
+
+            // Layer 3: Additive 小节
+            foldoutLayers.Add(CreateLayerSubHeader("Layer 3: Additive", isFirst: false));
+            if (enableAddProp != null) { var f = new PropertyField(enableAddProp, "Enable Additive (Layer 3)"); BindSettingField(f); foldoutLayers.Add(f); }
+            if (addWeightProp != null) { var f = new PropertyField(addWeightProp, "Additive Weight"); BindSettingField(f); foldoutLayers.Add(f); }
+
+            _assetSettingsContainer.Add(foldoutLayers);
 
             // 2. Blending Settings Foldout
             var foldoutBlending = new Foldout { text = "Blending Settings", value = true };
@@ -826,7 +937,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _assetSettingsContainer.Add(foldoutRootMotion);
 
             // 4. Physical Sections Foldout
-            var foldoutSections = new Foldout { text = "Physical Sections (去语义化物理分段)", value = true };
+            var foldoutSections = new Foldout { text = "Physical Sections", value = true };
             foldoutSections.AddToClassList("montage-inspector-foldout");
 
             var splitsProp = _serializedAsset.FindProperty("_splitTimestamps");
@@ -871,6 +982,31 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
             _assetSettingsContainer.Bind(_serializedAsset);
             isBinding = false;
+        }
+
+        private static VisualElement CreateLayerSubHeader(string title, bool isFirst = false)
+        {
+            var box = new VisualElement();
+            box.style.marginTop = isFirst ? 4 : 8;
+            box.style.marginBottom = 4;
+
+            if (!isFirst)
+            {
+                var line = new VisualElement();
+                line.style.height = 1;
+                line.style.backgroundColor = new Color(0.24f, 0.24f, 0.24f);
+                line.style.marginBottom = 6;
+                box.Add(line);
+            }
+
+            var label = new Label(title);
+            label.style.fontSize = 11;
+            label.style.unityFontStyleAndWeight = FontStyle.Bold;
+            label.style.color = new Color(0.78f, 0.82f, 0.88f);
+            label.style.paddingLeft = 2;
+            box.Add(label);
+
+            return box;
         }
 
         #endregion

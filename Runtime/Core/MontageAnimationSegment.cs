@@ -34,6 +34,20 @@ namespace Cwcbb.Tools.CwcMontage
         [Tooltip("交叉混合过渡插值曲线。")]
         [SerializeField] private AnimationCurve _blendCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
 
+        [Tooltip("片段入点平滑淡入时长（秒，用于消除孤立片段或从空白区切入时的姿态突变）。")]
+        [Min(0.0f)]
+        [SerializeField] private float _blendInTime = 0.05f;
+
+        [Tooltip("片段出点平滑淡出时长（秒，用于在片段结束前平滑淡出归零）。")]
+        [Min(0.0f)]
+        [SerializeField] private float _blendOutTime = 0.05f;
+
+        [Tooltip("片段淡入插值曲线。")]
+        [SerializeField] private AnimationCurve _blendInCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
+
+        [Tooltip("片段淡出插值曲线。")]
+        [SerializeField] private AnimationCurve _blendOutCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
+
         #endregion
 
         #region 公共属性
@@ -179,6 +193,42 @@ namespace Cwcbb.Tools.CwcMontage
         }
 
         /// <summary>
+        /// 片段入点平滑淡入时长（秒）。
+        /// </summary>
+        public float BlendInTime
+        {
+            get => _blendInTime;
+            set => _blendInTime = Mathf.Max(0.0f, value);
+        }
+
+        /// <summary>
+        /// 片段出点平滑淡出时长（秒）。
+        /// </summary>
+        public float BlendOutTime
+        {
+            get => _blendOutTime;
+            set => _blendOutTime = Mathf.Max(0.0f, value);
+        }
+
+        /// <summary>
+        /// 片段淡入插值曲线。
+        /// </summary>
+        public AnimationCurve BlendInCurve
+        {
+            get => _blendInCurve ??= AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
+            set => _blendInCurve = value;
+        }
+
+        /// <summary>
+        /// 片段淡出插值曲线。
+        /// </summary>
+        public AnimationCurve BlendOutCurve
+        {
+            get => _blendOutCurve ??= AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
+            set => _blendOutCurve = value;
+        }
+
+        /// <summary>
         /// 片段显示名称。
         /// </summary>
         public string SegmentName => _clip != null ? _clip.name : "None (Missing Clip)";
@@ -273,6 +323,55 @@ namespace Cwcbb.Tools.CwcMontage
             {
                 _blendCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
             }
+
+            if (_blendInTime < 0.0f) _blendInTime = 0.0f;
+            if (_blendOutTime < 0.0f) _blendOutTime = 0.0f;
+
+            if (_blendInCurve == null || _blendInCurve.length < 2)
+            {
+                _blendInCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
+            }
+
+            if (_blendOutCurve == null || _blendOutCurve.length < 2)
+            {
+                _blendOutCurve = AnimationCurve.EaseInOut(0f, 0f, 1f, 1f);
+            }
+        }
+
+        /// <summary>
+        /// 计算给定时间轴时间戳在该片段入点淡入（Blend In）阶段的权重因子 [0.0, 1.0]。
+        /// </summary>
+        public float CalculateFadeInFactor(float timelineTime)
+        {
+            if (_blendInTime <= 0.0001f) return 1.0f;
+            float elapsed = timelineTime - _startTime;
+            if (elapsed <= 0f) return 0.0f;
+            float progress = Mathf.Clamp01(elapsed / _blendInTime);
+            return _blendInCurve != null ? Mathf.Clamp01(_blendInCurve.Evaluate(progress)) : progress;
+        }
+
+        /// <summary>
+        /// 计算给定时间轴时间戳在该片段出点淡出（Blend Out）阶段的权重因子 [0.0, 1.0]。
+        /// </summary>
+        public float CalculateFadeOutFactor(float timelineTime)
+        {
+            if (_blendOutTime <= 0.0001f) return 1.0f;
+            float remaining = EndTime - timelineTime;
+            if (remaining <= 0f) return 0.0f;
+            float progress = Mathf.Clamp01(remaining / _blendOutTime);
+            return _blendOutCurve != null ? Mathf.Clamp01(_blendOutCurve.Evaluate(progress)) : progress;
+        }
+
+        /// <summary>
+        /// 计算给定时间轴时间戳在当前片段生命周期内的自身综合淡入淡出包络权重 [0.0, 1.0]。
+        /// 若在片段有效区间外返回 0；在入点按 BlendInTime 爬升，在出点按 BlendOutTime 衰减。
+        /// </summary>
+        public float CalculateBlendWeight(float timelineTime)
+        {
+            if (timelineTime < _startTime || timelineTime > EndTime) return 0.0f;
+            float inFactor = CalculateFadeInFactor(timelineTime);
+            float outFactor = CalculateFadeOutFactor(timelineTime);
+            return Mathf.Min(inFactor, outFactor);
         }
 
         /// <summary>
@@ -315,6 +414,14 @@ namespace Cwcbb.Tools.CwcMontage
                 _duration = _duration,
                 _blendCurve = _blendCurve != null && _blendCurve.keys != null
                     ? new AnimationCurve(_blendCurve.keys)
+                    : AnimationCurve.EaseInOut(0f, 0f, 1f, 1f),
+                _blendInTime = _blendInTime,
+                _blendOutTime = _blendOutTime,
+                _blendInCurve = _blendInCurve != null && _blendInCurve.keys != null
+                    ? new AnimationCurve(_blendInCurve.keys)
+                    : AnimationCurve.EaseInOut(0f, 0f, 1f, 1f),
+                _blendOutCurve = _blendOutCurve != null && _blendOutCurve.keys != null
+                    ? new AnimationCurve(_blendOutCurve.keys)
                     : AnimationCurve.EaseInOut(0f, 0f, 1f, 1f)
             };
             return cloned;

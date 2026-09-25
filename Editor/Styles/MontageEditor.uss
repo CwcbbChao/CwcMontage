@@ -654,6 +654,32 @@
     color: #FFAAAA;
 }
 
+.montage-track-weight-field {
+    width: 38px;
+    height: 18px;
+    margin: 0;
+    padding: 0;
+}
+
+.montage-track-weight-field > .unity-base-field__input {
+    background-color: #1A1A1A;
+    border-width: 1px;
+    border-color: #383838;
+    border-radius: 3px;
+    font-size: 10px;
+    color: #DDDDDD;
+    -unity-text-align: middle-center;
+    padding-left: 1px;
+    padding-right: 1px;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+.montage-track-weight-field > .unity-base-field__input:focus {
+    border-color: #4FC3F7;
+    background-color: #242424;
+}
+
 .montage-tracks-scroll-view {
     flex-grow: 1;
 }

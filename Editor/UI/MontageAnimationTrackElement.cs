@@ -47,8 +47,14 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         private int _dragMode; // 0: Move, 1: StretchRight, 2: StretchLeft
         private MontageAnimationSegment _activePickerTargetSegment;
         private float _pendingAddClipStartTime = -1f;
+        private bool _isWaitingForPicker;
         private VisualElement _draggingBlockElement;
         private bool _hasDragMoved;
+        private FloatField _weightField;
+        private bool _isDropHighlighted;
+
+        private MontageLayerChannel _channel;
+        private List<MontageAnimationSegment> TrackSegments => _targetAsset?.GetSegments(_channel);
 
         #endregion
 
@@ -56,6 +62,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public VisualElement HeaderElement => _headerElement;
         public VisualElement ContentElement => _contentElement;
+        public MontageLayerChannel Channel => _channel;
         public float PixelsPerSecond => BASE_PIXELS_PER_SECOND * _zoomLevel;
         public float ContentPixelWidth => Mathf.Max(100f, _clipLength * PixelsPerSecond);
         public int SelectedSegmentIndex => _selectedSegmentIndex;
@@ -80,6 +87,22 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         /// </summary>
         public event Action<float> OnRequestScrubTime;
 
+        /// <summary>
+        /// 请求根据鼠标屏幕位置查找目标动画轨道。
+        /// </summary>
+        public Func<Vector2, MontageAnimationTrackElement> RequestTargetTrack;
+
+        /// <summary>
+        /// 请求执行跨轨道移动动画片段。
+        /// 参数：(源轨道, 目标轨道, 片段, 期望起始时间)
+        /// </summary>
+        public Action<MontageAnimationTrackElement, MontageAnimationTrackElement, MontageAnimationSegment, float> RequestCrossTrackMove;
+
+        /// <summary>
+        /// 当拖拽悬停状态发生改变时触发（用于通知其他轨道清除/显示高亮）。
+        /// </summary>
+        public Action<MontageAnimationTrackElement, bool> OnTrackDropHighlightChanged;
+
         #endregion
 
         #region 构造方法
@@ -88,9 +111,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             MontageSequenceSO targetAsset,
             float clipLength,
             float frameRate,
-            float zoomLevel)
+            float zoomLevel,
+            MontageLayerChannel channel = MontageLayerChannel.FullBody)
         {
             _targetAsset = targetAsset;
+            _channel = channel;
             _clipLength = Mathf.Max(0.001f, clipLength);
             _frameRate = Mathf.Max(1f, frameRate);
             _zoomLevel = Mathf.Clamp(zoomLevel, 0.005f, 20f);
@@ -114,9 +139,22 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _frameRate = Mathf.Max(1f, frameRate);
             _contentDuration = contentDuration >= 0f ? contentDuration : (_targetAsset != null ? _targetAsset.TotalDuration : _clipLength);
 
+            UpdateLayerWeightVisual();
             UpdateContentWidth();
             RebuildSegments();
             _contentElement?.MarkDirtyRepaint();
+        }
+
+        /// <summary>
+        /// 刷新该动画轨道当前显示的层混合权重数值。
+        /// </summary>
+        public void UpdateLayerWeightVisual()
+        {
+            if (_weightField != null && _targetAsset != null)
+            {
+                float w = _targetAsset.GetChannelWeight(_channel);
+                _weightField.SetValueWithoutNotify((float)Math.Round(w, 2));
+            }
         }
 
         /// <summary>
@@ -136,8 +174,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         public void SelectSegment(MontageAnimationSegment segment)
         {
             _selectedSegment = segment;
-            _selectedSegmentIndex = (_targetAsset?.AnimationSegments != null && segment != null)
-                ? _targetAsset.AnimationSegments.IndexOf(segment)
+            var segs = TrackSegments;
+            _selectedSegmentIndex = (segs != null && segment != null)
+                ? segs.IndexOf(segment)
                 : -1;
 
             RefreshSelectedSegmentHighlight();
@@ -154,9 +193,10 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         /// <param name="index">目标片段在资产中的索引</param>
         public void SelectSegment(int index)
         {
-            if (_targetAsset?.AnimationSegments != null && index >= 0 && index < _targetAsset.AnimationSegments.Count)
+            var segs = TrackSegments;
+            if (segs != null && index >= 0 && index < segs.Count)
             {
-                SelectSegment(_targetAsset.AnimationSegments[index]);
+                SelectSegment(segs[index]);
             }
             else
             {
@@ -173,6 +213,98 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _selectedSegment = null;
             _selectedSegmentIndex = -1;
             RefreshSelectedSegmentHighlight();
+        }
+
+        /// <summary>
+        /// 设置当前轨道是否显示拖拽悬停落点高亮。
+        /// </summary>
+        public void SetDropHighlight(bool highlight)
+        {
+            if (_isDropHighlighted == highlight) return;
+            _isDropHighlighted = highlight;
+
+            if (_contentElement != null)
+            {
+                if (highlight)
+                {
+                    _contentElement.style.backgroundColor = new Color(0.18f, 0.35f, 0.60f, 0.45f);
+                    _contentElement.style.borderTopColor = new Color(0.35f, 0.65f, 1.0f, 0.9f);
+                    _contentElement.style.borderBottomColor = new Color(0.35f, 0.65f, 1.0f, 0.9f);
+                    _contentElement.style.borderTopWidth = 1.5f;
+                    _contentElement.style.borderBottomWidth = 1.5f;
+                }
+                else
+                {
+                    _contentElement.style.backgroundColor = StyleKeyword.Null;
+                    _contentElement.style.borderTopColor = StyleKeyword.Null;
+                    _contentElement.style.borderBottomColor = StyleKeyword.Null;
+                    _contentElement.style.borderTopWidth = StyleKeyword.Null;
+                    _contentElement.style.borderBottomWidth = StyleKeyword.Null;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 复制当前选中的动画片段到剪贴板。
+        /// </summary>
+        public void CopySelectedSegment()
+        {
+            if (_selectedSegment != null)
+            {
+                MontageClipboard.CopySegment(_selectedSegment);
+            }
+        }
+
+        /// <summary>
+        /// 从剪贴板粘贴动画片段至指定时间戳。
+        /// </summary>
+        public void PasteCopiedSegmentAt(float clickTime)
+        {
+            if (!MontageClipboard.HasCopiedSegment || _targetAsset == null) return;
+            var segs = TrackSegments;
+            if (segs == null) return;
+
+            Undo.RecordObject(_targetAsset, "Paste Animation Clip");
+            var clone = MontageClipboard.GetClonedSegment();
+            if (clone == null) return;
+
+            float targetTime = Mathf.Max(0f, clickTime);
+            clone.StartTime = SnapToFrame(targetTime);
+            segs.Add(clone);
+
+            _targetAsset.SortChannelSegments(_channel);
+            _targetAsset.EnsureSegmentsValid();
+
+            RebuildSegments();
+            SelectSegment(clone);
+            EditorUtility.SetDirty(_targetAsset);
+            OnDataModified?.Invoke();
+        }
+
+        /// <summary>
+        /// 复制副本（Duplicate）当前选中的动画片段。
+        /// </summary>
+        public void DuplicateSelectedSegment()
+        {
+            if (_selectedSegment != null)
+            {
+                int idx = TrackSegments != null ? TrackSegments.IndexOf(_selectedSegment) : -1;
+                if (idx >= 0)
+                {
+                    DuplicateSegmentAt(idx);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 删除当前选中的动画片段。
+        /// </summary>
+        public void DeleteSelectedSegment()
+        {
+            if (_selectedSegment != null)
+            {
+                DeleteSegment(_selectedSegment);
+            }
         }
 
         #endregion
@@ -192,9 +324,25 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             var titleBox = new VisualElement();
             titleBox.AddToClassList("montage-track-title-box");
 
-            var titleLabel = new Label("Animation");
+            string title = _channel switch
+            {
+                MontageLayerChannel.Additive => "Additive (Layer 3)",
+                MontageLayerChannel.FullBody => "FullBody (Layer 2)",
+                MontageLayerChannel.UpperBody => "UpperBody (Layer 1)",
+                _ => "Animation"
+            };
+
+            string tooltip = _channel switch
+            {
+                MontageLayerChannel.Additive => "Additive animation track (Layer 3, secondary overlays like hit reactions & tremors).",
+                MontageLayerChannel.FullBody => "Full body animation track (Layer 2, dominant actions like rolls, attacks & ultimates).",
+                MontageLayerChannel.UpperBody => "Upper body animation track (Layer 1, masked actions for locomotion & moving attacks).",
+                _ => "Core animation track."
+            };
+
+            var titleLabel = new Label(title);
             titleLabel.AddToClassList("montage-track-title");
-            titleLabel.tooltip = "Core animation track supporting multiple clips, individual play rates and overlap crossfades.";
+            titleLabel.tooltip = tooltip;
             titleBox.Add(titleLabel);
 
             _headerElement.Add(titleBox);
@@ -202,6 +350,38 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             var buttonsGroup = new VisualElement();
             buttonsGroup.style.flexDirection = FlexDirection.Row;
             buttonsGroup.style.alignItems = Align.Center;
+
+            // 动画层混合权重调节组件 (Weight Field: [W: 1.00])
+            var weightBox = new VisualElement();
+            weightBox.style.flexDirection = FlexDirection.Row;
+            weightBox.style.alignItems = Align.Center;
+            weightBox.style.marginRight = 4;
+            weightBox.tooltip = "Layer Blend Weight [0.0 - 1.0]. Controls overall blend influence of this animation track.";
+
+            var weightLbl = new Label("W:");
+            weightLbl.style.fontSize = 10;
+            weightLbl.style.color = new Color(0.62f, 0.62f, 0.62f);
+            weightLbl.style.marginRight = 2;
+            weightBox.Add(weightLbl);
+
+            float initialWeight = _targetAsset != null ? _targetAsset.GetChannelWeight(_channel) : 1.0f;
+            _weightField = new FloatField { value = (float)Math.Round(initialWeight, 2) };
+            _weightField.AddToClassList("montage-track-weight-field");
+            _weightField.RegisterValueChangedCallback(evt =>
+            {
+                if (_targetAsset == null) return;
+                float clamped = Mathf.Clamp01(evt.newValue);
+                if (!Mathf.Approximately(clamped, evt.newValue))
+                {
+                    _weightField.SetValueWithoutNotify((float)Math.Round(clamped, 2));
+                }
+                Undo.RecordObject(_targetAsset, "Change Layer Weight");
+                _targetAsset.SetChannelWeight(_channel, clamped);
+                EditorUtility.SetDirty(_targetAsset);
+                OnDataModified?.Invoke();
+            });
+            weightBox.Add(_weightField);
+            buttonsGroup.Add(weightBox);
 
             // 与普通轨道一致的添加按钮
             var addClipButton = new Button(ShowAddClipPicker) { text = "+" };
@@ -350,7 +530,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _segmentsContainer?.Clear();
             _crossfadeContainer?.Clear();
 
-            if (_targetAsset?.AnimationSegments == null || _targetAsset.AnimationSegments.Count == 0)
+            var segments = TrackSegments;
+            if (segments == null || segments.Count == 0)
             {
                 _selectedSegment = null;
                 _selectedSegmentIndex = -1;
@@ -360,18 +541,17 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             // 若之前选中的片段已不在资产中，清空选中；若仍在，同步最新索引
             if (_selectedSegment != null)
             {
-                _selectedSegmentIndex = _targetAsset.AnimationSegments.IndexOf(_selectedSegment);
+                _selectedSegmentIndex = segments.IndexOf(_selectedSegment);
                 if (_selectedSegmentIndex < 0)
                 {
                     _selectedSegment = null;
                 }
             }
-            else if (_selectedSegmentIndex >= 0 && _selectedSegmentIndex < _targetAsset.AnimationSegments.Count)
+            else if (_selectedSegmentIndex >= 0 && _selectedSegmentIndex < segments.Count)
             {
-                _selectedSegment = _targetAsset.AnimationSegments[_selectedSegmentIndex];
+                _selectedSegment = segments[_selectedSegmentIndex];
             }
 
-            var segments = _targetAsset.AnimationSegments;
             float pps = PixelsPerSecond;
 
             // 构建按 StartTime 升序排序的片段列表，用于计算每个片段的重叠区间与自身独占空间
@@ -473,7 +653,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 if (evt.button == 0)
                 {
                     SelectSegment(seg);
-                    int curIdx = _targetAsset?.AnimationSegments != null ? _targetAsset.AnimationSegments.IndexOf(seg) : index;
+                    int curIdx = TrackSegments != null ? TrackSegments.IndexOf(seg) : index;
                     if (curIdx >= 0)
                     {
                         StartDrag(evt, curIdx, 2); // 2: Stretch Left
@@ -492,7 +672,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 if (evt.button == 0)
                 {
                     SelectSegment(seg);
-                    int curIdx = _targetAsset?.AnimationSegments != null ? _targetAsset.AnimationSegments.IndexOf(seg) : index;
+                    int curIdx = TrackSegments != null ? TrackSegments.IndexOf(seg) : index;
                     if (curIdx >= 0)
                     {
                         StartDrag(evt, curIdx, 1); // 1: Stretch Right
@@ -506,7 +686,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             block.RegisterCallback<MouseDownEvent>(evt =>
             {
                 SelectSegment(seg);
-                int curIdx = _targetAsset?.AnimationSegments != null ? _targetAsset.AnimationSegments.IndexOf(seg) : index;
+                int curIdx = TrackSegments != null ? TrackSegments.IndexOf(seg) : index;
                 if (evt.button == 0)
                 {
                     if (curIdx >= 0)
@@ -530,9 +710,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void UpdateCrossfadeOverlays()
         {
-            if (_crossfadeContainer == null || _targetAsset?.AnimationSegments == null) return;
+            var segments = TrackSegments;
+            if (_crossfadeContainer == null || segments == null) return;
 
-            var segments = _targetAsset.AnimationSegments;
             float pps = PixelsPerSecond;
 
             // 1. 计算当前所有两两相邻片段的重叠区间
@@ -617,7 +797,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private VisualElement CreateCrossfadeOverlay(float startTime, float duration, float pps, MontageAnimationSegment initialSegA, MontageAnimationSegment initialSegB, int indexA, int indexB)
         {
-            if (_targetAsset?.AnimationSegments == null) return new VisualElement();
+            if (TrackSegments == null) return new VisualElement();
             if (initialSegA == null || initialSegB == null) return new VisualElement();
 
             float left = startTime * pps;
@@ -739,7 +919,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                     var hld = overlay.userData as CrossfadeOverlayHolder;
                     var sB = hld != null ? hld.SegmentB : initialSegB;
                     SelectSegment(sB);
-                    int curB = _targetAsset?.AnimationSegments != null && sB != null ? _targetAsset.AnimationSegments.IndexOf(sB) : -1;
+                    int curB = TrackSegments != null && sB != null ? TrackSegments.IndexOf(sB) : -1;
                     if (curB >= 0)
                     {
                         StartDrag(evt, curB, 2); // 2: Stretch Left of B
@@ -766,7 +946,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                     var hld = overlay.userData as CrossfadeOverlayHolder;
                     var sA = hld != null ? hld.SegmentA : initialSegA;
                     SelectSegment(sA);
-                    int curA = _targetAsset?.AnimationSegments != null && sA != null ? _targetAsset.AnimationSegments.IndexOf(sA) : -1;
+                    int curA = TrackSegments != null && sA != null ? TrackSegments.IndexOf(sA) : -1;
                     if (curA >= 0)
                     {
                         StartDrag(evt, curA, 1); // 1: Stretch Right of A
@@ -833,7 +1013,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 var targetSeg = isHitA ? sA : sB;
                 if (targetSeg == null) return;
 
-                int targetIdx = _targetAsset?.AnimationSegments != null ? _targetAsset.AnimationSegments.IndexOf(targetSeg) : -1;
+                var segs = TrackSegments;
+                int targetIdx = segs != null ? segs.IndexOf(targetSeg) : -1;
 
                 if (evt.button == 0) // 左键
                 {
@@ -864,10 +1045,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void StartDrag(MouseDownEvent evt, int segmentIndex, int mode)
         {
-            if (evt.button != 0 || _targetAsset?.AnimationSegments == null) return;
-            if (segmentIndex < 0 || segmentIndex >= _targetAsset.AnimationSegments.Count) return;
+            var segs = TrackSegments;
+            if (evt.button != 0 || segs == null) return;
+            if (segmentIndex < 0 || segmentIndex >= segs.Count) return;
 
-            var seg = _targetAsset.AnimationSegments[segmentIndex];
+            var seg = segs[segmentIndex];
             if (seg == null) return;
 
             _isDraggingSegment = true;
@@ -909,8 +1091,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void OnDragMove(MouseMoveEvent evt)
         {
-            if (!_isDraggingSegment || _draggingIndex < 0 || _targetAsset?.AnimationSegments == null) return;
-            if (_draggingIndex >= _targetAsset.AnimationSegments.Count) return;
+            var segs = TrackSegments;
+            if (!_isDraggingSegment || _draggingIndex < 0 || segs == null) return;
+            if (_draggingIndex >= segs.Count) return;
 
             float deltaPixel = evt.mousePosition.x - _dragStartMousePos.x;
             if (!_hasDragMoved && Mathf.Abs(deltaPixel) > 1.5f)
@@ -924,7 +1107,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 return;
             }
 
-            var seg = _targetAsset.AnimationSegments[_draggingIndex];
+            var seg = segs[_draggingIndex];
             float pps = PixelsPerSecond;
             float deltaTime = deltaPixel / pps;
 
@@ -938,6 +1121,18 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 targetTime = ApplyMagneticSnapping(targetTime, _draggingIndex, isStart: true);
                 targetTime = SnapToFrame(targetTime);
                 seg.StartTime = Mathf.Max(0f, targetTime);
+
+                // 跨轨道悬停高亮反馈
+                var targetTrack = RequestTargetTrack?.Invoke(evt.mousePosition);
+                if (targetTrack != null && targetTrack != this)
+                {
+                    targetTrack.SetDropHighlight(true);
+                    OnTrackDropHighlightChanged?.Invoke(targetTrack, true);
+                }
+                else
+                {
+                    OnTrackDropHighlightChanged?.Invoke(this, false);
+                }
             }
             // 模式 1: 拖拽右边缘拉伸调速 (Stretch Right, Adjust Duration) - 终点离散对齐到每帧
             else if (_dragMode == 1)
@@ -990,9 +1185,13 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         {
             if (!_isDraggingSegment) return;
 
-            var seg = (_draggingIndex >= 0 && _targetAsset?.AnimationSegments != null && _draggingIndex < _targetAsset.AnimationSegments.Count)
-                ? _targetAsset.AnimationSegments[_draggingIndex]
+            var segs = TrackSegments;
+            var seg = (_draggingIndex >= 0 && segs != null && _draggingIndex < segs.Count)
+                ? segs[_draggingIndex]
                 : null;
+
+            OnTrackDropHighlightChanged?.Invoke(null, false);
+            SetDropHighlight(false);
 
             if (_draggingBlockElement != null)
             {
@@ -1013,6 +1212,18 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             // 若用户只是单击（Click）并未发生位移，直接保持现状，绝不广播 OnDataModified 避免中断预览播放
             bool hasActualChange = _hasDragMoved && seg != null && 
                 (Mathf.Abs(seg.StartTime - _dragStartSegmentTime) > 0.0001f || Mathf.Abs(seg.Duration - _dragStartDuration) > 0.0001f);
+
+            // 跨轨道移动触发：当处于平移模式且在另一个有效动画轨道上释放鼠标
+            if (_hasDragMoved && _dragMode == 0 && seg != null)
+            {
+                var targetTrack = RequestTargetTrack?.Invoke(evt.mousePosition);
+                if (targetTrack != null && targetTrack != this)
+                {
+                    RequestCrossTrackMove?.Invoke(this, targetTrack, seg, seg.StartTime);
+                    evt.StopPropagation();
+                    return;
+                }
+            }
 
             if (!hasActualChange)
             {
@@ -1035,7 +1246,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 _targetAsset.SortAnimationSegments();
                 _targetAsset.EnsureSegmentsValid();
 
-                _selectedSegmentIndex = _targetAsset.AnimationSegments.IndexOf(seg);
+                var currentSegs = TrackSegments;
+                _selectedSegmentIndex = currentSegs != null ? currentSegs.IndexOf(seg) : -1;
                 RebuildSegments();
                 EditorUtility.SetDirty(_targetAsset);
                 OnDataModified?.Invoke();
@@ -1103,7 +1315,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         {
             float excludeStart = -1f;
             float excludeEnd = -1f;
-            if (_targetAsset?.AnimationSegments != null && currentIndex >= 0 && currentIndex < _targetAsset.AnimationSegments.Count)
+            var segs = TrackSegments;
+            if (segs != null && currentIndex >= 0 && currentIndex < segs.Count)
             {
                 excludeStart = _dragStartSegmentTime;
                 excludeEnd = _dragStartSegmentTime + _dragStartDuration;
@@ -1128,7 +1341,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         /// </summary>
         private bool HasInvalidOverlap()
         {
-            var segments = _targetAsset?.AnimationSegments;
+            var segments = TrackSegments;
             if (segments == null || segments.Count <= 1) return false;
 
             // 复制列表并按 StartTime 升序排序；若 StartTime 相同，按 EndTime 降序排序（大区间在前）
@@ -1162,9 +1375,6 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 }
 
                 // 2. 检查三重叠 (Triple Overlap)
-                // 在按 StartTime 升序排序的序列中，若第 i+2 个片段的 StartTime 小于第 i 个片段的 EndTime，
-                // 则在时间段 [sorted[i+2].StartTime, min(sorted[i].EndTime, sorted[i+1].EndTime)] 内，
-                // 片段 i、i+1、i+2 三者同时存活重叠，构成非法三重叠。
                 if (i < sorted.Count - 2)
                 {
                     var third = sorted[i + 2];
@@ -1184,7 +1394,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void OnContentKeyDown(KeyDownEvent evt)
         {
-            if (_targetAsset?.AnimationSegments == null || _selectedSegmentIndex < 0 || _selectedSegmentIndex >= _targetAsset.AnimationSegments.Count)
+            var segs = TrackSegments;
+            if (segs == null || _selectedSegmentIndex < 0 || _selectedSegmentIndex >= segs.Count)
             {
                 return;
             }
@@ -1203,10 +1414,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public void DeleteSegmentAt(int index)
         {
-            if (_targetAsset?.AnimationSegments == null || index < 0 || index >= _targetAsset.AnimationSegments.Count) return;
+            var segs = TrackSegments;
+            if (segs == null || index < 0 || index >= segs.Count) return;
 
             Undo.RecordObject(_targetAsset, "Delete Animation Segment");
-            _targetAsset.AnimationSegments.RemoveAt(index);
+            segs.RemoveAt(index);
             _selectedSegment = null;
             _selectedSegmentIndex = -1;
             RebuildSegments();
@@ -1216,8 +1428,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public void DeleteSegment(MontageAnimationSegment segment)
         {
-            if (_targetAsset?.AnimationSegments == null || segment == null) return;
-            int idx = _targetAsset.AnimationSegments.IndexOf(segment);
+            var segs = TrackSegments;
+            if (segs == null || segment == null) return;
+            int idx = segs.IndexOf(segment);
             if (idx >= 0)
             {
                 DeleteSegmentAt(idx);
@@ -1226,14 +1439,15 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public void DuplicateSegmentAt(int index)
         {
-            if (_targetAsset?.AnimationSegments == null || index < 0 || index >= _targetAsset.AnimationSegments.Count) return;
+            var segs = TrackSegments;
+            if (segs == null || index < 0 || index >= segs.Count) return;
 
             Undo.RecordObject(_targetAsset, "Duplicate Animation Segment");
-            var seg = _targetAsset.AnimationSegments[index];
+            var seg = segs[index];
             var copy = seg.Clone();
             copy.StartTime = SnapToFrame(seg.EndTime);
             copy.Duration = SnapToFrame(seg.Duration, minFrames: 1);
-            _targetAsset.AnimationSegments.Insert(index + 1, copy);
+            segs.Insert(index + 1, copy);
             _targetAsset.SortAnimationSegments();
             SelectSegment(copy);
             EditorUtility.SetDirty(_targetAsset);
@@ -1247,6 +1461,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void ShowAddClipPickerAt(float clickTime)
         {
+            _isWaitingForPicker = true;
             _activePickerTargetSegment = null;
             _pendingAddClipStartTime = clickTime;
             EditorGUIUtility.ShowObjectPicker<AnimationClip>(null, false, "", 202688);
@@ -1254,13 +1469,23 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public void HandleObjectPickerResult(AnimationClip pickedClip, bool isClosed = false)
         {
+            if (!_isWaitingForPicker) return;
+
             if (_targetAsset == null)
             {
                 if (isClosed)
                 {
+                    _isWaitingForPicker = false;
                     _activePickerTargetSegment = null;
                     _pendingAddClipStartTime = -1f;
                 }
+                return;
+            }
+
+            var segs = TrackSegments;
+            if (segs == null)
+            {
+                if (isClosed) _isWaitingForPicker = false;
                 return;
             }
 
@@ -1276,9 +1501,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                     {
                         startTime = SnapToFrame(_pendingAddClipStartTime);
                     }
-                    else if (_targetAsset.AnimationSegments.Count > 0)
+                    else if (segs.Count > 0)
                     {
-                        var last = _targetAsset.AnimationSegments[^1];
+                        var last = segs[^1];
                         if (last != null)
                         {
                             startTime = SnapToFrame(last.EndTime);
@@ -1287,11 +1512,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
                     _activePickerTargetSegment = new MontageAnimationSegment(pickedClip, startTime, 1.0f);
                     _activePickerTargetSegment.Duration = SnapToFrame(_activePickerTargetSegment.Duration, minFrames: 1);
-                    _targetAsset.AnimationSegments.Add(_activePickerTargetSegment);
-                    _targetAsset.SortAnimationSegments();
+                    segs.Add(_activePickerTargetSegment);
+                    _targetAsset.SortChannelSegments(_channel);
                     _targetAsset.EnsureSegmentsValid();
 
-                    int newIdx = _targetAsset.AnimationSegments.IndexOf(_activePickerTargetSegment);
+                    int newIdx = segs.IndexOf(_activePickerTargetSegment);
                     SelectSegment(newIdx);
                 }
                 // 2. 如果已经在当前会话添加了片段，用户在 Picker 中切换另一个动画：直接切换当前选中片段的引用
@@ -1299,10 +1524,10 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 {
                     _activePickerTargetSegment.Clip = pickedClip;
                     _activePickerTargetSegment.Duration = SnapToFrame(_activePickerTargetSegment.CalculateNaturalDuration(), minFrames: 1);
-                    _targetAsset.SortAnimationSegments();
+                    _targetAsset.SortChannelSegments(_channel);
                     _targetAsset.EnsureSegmentsValid();
 
-                    int curIdx = _targetAsset.AnimationSegments.IndexOf(_activePickerTargetSegment);
+                    int curIdx = segs.IndexOf(_activePickerTargetSegment);
                     SelectSegment(curIdx);
                 }
 
@@ -1312,6 +1537,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
             if (isClosed)
             {
+                _isWaitingForPicker = false;
                 _activePickerTargetSegment = null;
                 _pendingAddClipStartTime = -1f;
             }
@@ -1319,12 +1545,14 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void ShowSegmentContextMenu(int index, Vector2 mousePos)
         {
-            if (_targetAsset?.AnimationSegments == null || index < 0 || index >= _targetAsset.AnimationSegments.Count) return;
-            var seg = _targetAsset.AnimationSegments[index];
+            var segs = TrackSegments;
+            if (segs == null || index < 0 || index >= segs.Count) return;
+            var seg = segs[index];
 
             var menu = new GenericMenu();
 
-            // 1. 高频核心编辑操作置顶
+            // 1. 高频核心编辑操作置顶 (与 Block 菜单标准完全对齐)
+            menu.AddItem(new GUIContent("Copy (Ctrl+C)"), false, () => CopySelectedSegment());
             menu.AddItem(new GUIContent("Duplicate (Ctrl+D)"), false, () => DuplicateSegmentAt(index));
             menu.AddItem(new GUIContent("Delete (Del)"), false, () => DeleteSegmentAt(index));
 
@@ -1335,7 +1563,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             {
                 menu.AddItem(new GUIContent("Snap to Previous"), false, () =>
                 {
-                    var prev = _targetAsset.AnimationSegments[index - 1];
+                    var prev = segs[index - 1];
                     if (prev != null)
                     {
                         Undo.RecordObject(_targetAsset, "Snap Segment to Previous");
@@ -1382,6 +1610,17 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             {
                 var menu = new GenericMenu();
                 menu.AddItem(new GUIContent("Add Animation Clip..."), false, () => ShowAddClipPickerAt(clickTime));
+                menu.AddSeparator("");
+
+                if (MontageClipboard.HasCopiedSegment)
+                {
+                    menu.AddItem(new GUIContent("Paste Clip (Ctrl+V)"), false, () => PasteCopiedSegmentAt(clickTime));
+                }
+                else
+                {
+                    menu.AddDisabledItem(new GUIContent("Paste Clip (Ctrl+V)"));
+                }
+
                 menu.DropDown(new Rect(evt.mousePosition, Vector2.zero));
                 evt.StopPropagation();
             }
@@ -1413,6 +1652,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
             Undo.RecordObject(_targetAsset, "Drop Animation Clips");
 
+            var segs = TrackSegments;
+            if (segs == null) return;
+
             float curTime = dropTime;
             foreach (var obj in DragAndDrop.objectReferences)
             {
@@ -1420,7 +1662,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 {
                     var seg = new MontageAnimationSegment(clip, curTime, 1.0f);
                     seg.Duration = SnapToFrame(seg.Duration, minFrames: 1);
-                    _targetAsset.AnimationSegments.Add(seg);
+                    segs.Add(seg);
                     curTime = SnapToFrame(seg.EndTime);
                 }
             }

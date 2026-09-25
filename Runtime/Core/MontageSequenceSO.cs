@@ -13,12 +13,37 @@ namespace Cwcbb.Tools.CwcMontage
     {
         #region Inspector 字段
 
-        [Header("Animation Base")]
-        [Tooltip("单条动画轨道上的所有动画片段列表（支持多动画拼接、独立调速与交叉混合）。")]
+        [Tooltip("是否激活上半身动画轨道（配合角色移动）。")]
+        [SerializeField] private bool _enableUpperBodyTrack;
+
+        [Tooltip("上半身动画层整体权重（0.0 ~ 1.0，用于控制上半身动作融合强弱）。")]
+        [Range(0f, 1f)]
+        [SerializeField] private float _upperBodyWeight = 1.0f;
+
+        [Tooltip("上半身动画片段列表。")]
+        [SerializeField] private List<MontageAnimationSegment> _upperBodySegments = new();
+
+        [Tooltip("全身核心动画层整体权重（0.0 ~ 1.0，主层默认 1.0）。")]
+        [Range(0f, 1f)]
+        [SerializeField] private float _fullBodyWeight = 1.0f;
+
+        [Tooltip("全身核心动画片段列表（默认常开主轨道，大幅度转身/大招/翻滚）。")]
         [SerializeField] private List<MontageAnimationSegment> _animationSegments = new();
 
-        [Tooltip("默认播放图层索引（0 为基础层，1+ 为叠加/覆盖动作层）。")]
-        [Min(0)]
+        [Tooltip("是否激活受击/抖动叠加动画轨道。")]
+        [SerializeField] private bool _enableAdditiveTrack;
+
+        [Tooltip("叠加动画层整体权重（0.0 ~ 1.0，用于控制受击、抖动等叠加姿态的强弱）。")]
+        [Range(0f, 1f)]
+        [SerializeField] private float _additiveWeight = 1.0f;
+
+        [Tooltip("叠加动画片段列表。")]
+        [SerializeField] private List<MontageAnimationSegment> _additiveSegments = new();
+
+        [Tooltip("是否开启上半身基准骨骼相对根节点姿态解耦（消除下半身奔跑前倾与晃动，100% 还原源动画中侧身劈砍、斜斩等真实体态）。")]
+        [SerializeField] private bool _decoupleUpperBodyOrientation = true;
+
+        [HideInInspector]
         [SerializeField] private int _animationLayer = 0;
 
         [Tooltip("基础播放速率倍率（默认 1.0）。")]
@@ -59,7 +84,7 @@ namespace Cwcbb.Tools.CwcMontage
         [Tooltip("是否应用根运动旋转。")]
         [SerializeField] private bool _applyRotationRootMotion;
 
-        [Header("Physical Sections (去语义化物理分段)")]
+        [Header("Physical Sections")]
         [Tooltip("时间轴切分点时间戳列表（秒）。按升序排列，N 个切分点将动画严格划分为 N + 1 个连续分段。")]
         [SerializeField] private List<float> _splitTimestamps = new();
 
@@ -72,7 +97,94 @@ namespace Cwcbb.Tools.CwcMontage
         #region 公共属性
 
         /// <summary>
-        /// 单条动画轨道上的所有动画片段列表。
+        /// 是否激活上半身动画轨道。
+        /// </summary>
+        public bool EnableUpperBodyTrack
+        {
+            get => _enableUpperBodyTrack;
+            set => _enableUpperBodyTrack = value;
+        }
+
+        /// <summary>
+        /// 上半身轨道快捷别名。
+        /// </summary>
+        public bool EnableUpperBody
+        {
+            get => _enableUpperBodyTrack;
+            set => _enableUpperBodyTrack = value;
+        }
+
+        /// <summary>
+        /// 是否开启上半身基准骨骼相对根节点姿态解耦。
+        /// </summary>
+        public bool DecoupleUpperBodyOrientation
+        {
+            get => _decoupleUpperBodyOrientation;
+            set => _decoupleUpperBodyOrientation = value;
+        }
+
+        /// <summary>
+        /// 上半身动画片段列表。
+        /// </summary>
+        public List<MontageAnimationSegment> UpperBodySegments => _upperBodySegments;
+
+        /// <summary>
+        /// 上半身动画层整体权重 [0.0, 1.0]。
+        /// </summary>
+        public float UpperBodyWeight
+        {
+            get => _upperBodyWeight;
+            set => _upperBodyWeight = Mathf.Clamp01(value);
+        }
+
+        /// <summary>
+        /// 全身核心动画片段列表（主轨道）。
+        /// </summary>
+        public List<MontageAnimationSegment> FullBodySegments => _animationSegments;
+
+        /// <summary>
+        /// 全身核心动画层整体权重 [0.0, 1.0]。
+        /// </summary>
+        public float FullBodyWeight
+        {
+            get => _fullBodyWeight;
+            set => _fullBodyWeight = Mathf.Clamp01(value);
+        }
+
+        /// <summary>
+        /// 是否激活叠加动画轨道。
+        /// </summary>
+        public bool EnableAdditiveTrack
+        {
+            get => _enableAdditiveTrack;
+            set => _enableAdditiveTrack = value;
+        }
+
+        /// <summary>
+        /// 叠加轨道快捷别名。
+        /// </summary>
+        public bool EnableAdditive
+        {
+            get => _enableAdditiveTrack;
+            set => _enableAdditiveTrack = value;
+        }
+
+        /// <summary>
+        /// 叠加动画片段列表。
+        /// </summary>
+        public List<MontageAnimationSegment> AdditiveSegments => _additiveSegments;
+
+        /// <summary>
+        /// 叠加动画层整体权重 [0.0, 1.0]。
+        /// </summary>
+        public float AdditiveWeight
+        {
+            get => _additiveWeight;
+            set => _additiveWeight = Mathf.Clamp01(value);
+        }
+
+        /// <summary>
+        /// 全身动画片段列表（向后兼容保留）。
         /// </summary>
         public List<MontageAnimationSegment> AnimationSegments => _animationSegments;
 
@@ -182,12 +294,36 @@ namespace Cwcbb.Tools.CwcMontage
             {
                 float maxEndTime = 0.0f;
 
-                // 1. 核心动画轨道上的动画片段
+                // 1. 核心动画轨道上的动画片段 (FullBody、UpperBody、Additive)
                 if (_animationSegments != null)
                 {
                     for (int i = 0; i < _animationSegments.Count; i++)
                     {
                         var seg = _animationSegments[i];
+                        if (seg != null && seg.EndTime > maxEndTime)
+                        {
+                            maxEndTime = seg.EndTime;
+                        }
+                    }
+                }
+
+                if (_enableUpperBodyTrack && _upperBodySegments != null)
+                {
+                    for (int i = 0; i < _upperBodySegments.Count; i++)
+                    {
+                        var seg = _upperBodySegments[i];
+                        if (seg != null && seg.EndTime > maxEndTime)
+                        {
+                            maxEndTime = seg.EndTime;
+                        }
+                    }
+                }
+
+                if (_enableAdditiveTrack && _additiveSegments != null)
+                {
+                    for (int i = 0; i < _additiveSegments.Count; i++)
+                    {
+                        var seg = _additiveSegments[i];
                         if (seg != null && seg.EndTime > maxEndTime)
                         {
                             maxEndTime = seg.EndTime;
@@ -413,12 +549,32 @@ namespace Cwcbb.Tools.CwcMontage
         }
 
         /// <summary>
-        /// 校验并对动画轨道上的片段列表按时间戳升序排序。
+        /// 校验并对所有动画轨道上的片段列表按时间戳升序排序。
         /// </summary>
         public void SortAnimationSegments()
         {
-            if (_animationSegments == null || _animationSegments.Count <= 1) return;
-            _animationSegments.Sort((a, b) => a.StartTime.CompareTo(b.StartTime));
+            SortSegmentsList(_animationSegments);
+            SortSegmentsList(_upperBodySegments);
+            SortSegmentsList(_additiveSegments);
+        }
+
+        /// <summary>
+        /// 校验并对所有通道动画轨道片段按时间戳升序排序。
+        /// </summary>
+        public void SortAllChannelSegments() => SortAnimationSegments();
+
+        /// <summary>
+        /// 对指定通道上的动画片段按时间戳升序排序。
+        /// </summary>
+        public void SortChannelSegments(MontageLayerChannel channel)
+        {
+            SortSegmentsList(GetSegments(channel));
+        }
+
+        private static void SortSegmentsList(List<MontageAnimationSegment> list)
+        {
+            if (list == null || list.Count <= 1) return;
+            list.Sort((a, b) => a.StartTime.CompareTo(b.StartTime));
         }
 
         /// <summary>
@@ -426,23 +582,140 @@ namespace Cwcbb.Tools.CwcMontage
         /// </summary>
         public void EnsureSegmentsValid()
         {
-            if (_animationSegments == null) return;
+            ValidateSegmentsList(_animationSegments);
+            ValidateSegmentsList(_upperBodySegments);
+            ValidateSegmentsList(_additiveSegments);
+        }
 
-            for (int i = 0; i < _animationSegments.Count; i++)
+        private static void ValidateSegmentsList(List<MontageAnimationSegment> list)
+        {
+            if (list == null) return;
+            for (int i = 0; i < list.Count; i++)
             {
-                _animationSegments[i]?.EnsureValid();
+                list[i]?.EnsureValid();
             }
         }
 
         /// <summary>
-        /// 评估指定蒙太奇绝对时间戳下所有活跃片段的索引、内部采样时间与归一化混合权重。
-        /// 支持相邻片段交叉过渡（Crossfade）的精确平滑插值。零 GC 内存分配。
+        /// 获取指定通道的动画片段列表。
         /// </summary>
-        /// <param name="timelineTime">蒙太奇绝对时间戳（秒）</param>
-        /// <param name="outIndices">输出活跃片段在列表中的索引</param>
-        /// <param name="outSampleTimes">输出对应片段内部的采样时间戳（秒）</param>
-        /// <param name="outWeights">输出对应片段的归一化混合权重 [0.0, 1.0]</param>
-        public void EvaluateAnimationSegments(
+        public List<MontageAnimationSegment> GetSegments(MontageLayerChannel channel)
+        {
+            return channel switch
+            {
+                MontageLayerChannel.UpperBody => _upperBodySegments,
+                MontageLayerChannel.FullBody => _animationSegments,
+                MontageLayerChannel.Additive => _additiveSegments,
+                _ => _animationSegments
+            };
+        }
+
+        /// <summary>
+        /// 查询指定通道是否处于激活开启状态。
+        /// </summary>
+        public bool IsChannelEnabled(MontageLayerChannel channel)
+        {
+            return channel switch
+            {
+                MontageLayerChannel.UpperBody => _enableUpperBodyTrack,
+                MontageLayerChannel.FullBody => true, // 全身轨道恒定开启
+                MontageLayerChannel.Additive => _enableAdditiveTrack,
+                _ => true
+            };
+        }
+
+        /// <summary>
+        /// 设置指定通道的激活开启状态。
+        /// </summary>
+        public void SetChannelEnabled(MontageLayerChannel channel, bool enabled)
+        {
+            switch (channel)
+            {
+                case MontageLayerChannel.UpperBody:
+                    _enableUpperBodyTrack = enabled;
+                    break;
+                case MontageLayerChannel.FullBody:
+                    // 全身轨道恒定开启，不允许关闭
+                    break;
+                case MontageLayerChannel.Additive:
+                    _enableAdditiveTrack = enabled;
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// 获取指定通道动画层的整体混合权重 [0.0, 1.0]。
+        /// </summary>
+        public float GetChannelWeight(MontageLayerChannel channel)
+        {
+            return channel switch
+            {
+                MontageLayerChannel.UpperBody => _upperBodyWeight,
+                MontageLayerChannel.FullBody => _fullBodyWeight,
+                MontageLayerChannel.Additive => _additiveWeight,
+                _ => 1.0f
+            };
+        }
+
+        /// <summary>
+        /// 设置指定通道动画层的整体混合权重 [0.0, 1.0]。
+        /// </summary>
+        public void SetChannelWeight(MontageLayerChannel channel, float weight)
+        {
+            float clamped = Mathf.Clamp01(weight);
+            switch (channel)
+            {
+                case MontageLayerChannel.UpperBody:
+                    _upperBodyWeight = clamped;
+                    break;
+                case MontageLayerChannel.FullBody:
+                    _fullBodyWeight = clamped;
+                    break;
+                case MontageLayerChannel.Additive:
+                    _additiveWeight = clamped;
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// 将动画片段从源通道迁移至目标通道。
+        /// </summary>
+        public bool MoveSegmentChannel(MontageAnimationSegment segment, MontageLayerChannel fromChannel, MontageLayerChannel toChannel)
+        {
+            if (segment == null || fromChannel == toChannel) return false;
+            var fromList = GetSegments(fromChannel);
+            var toList = GetSegments(toChannel);
+            if (fromList == null || toList == null || !fromList.Contains(segment)) return false;
+
+            fromList.Remove(segment);
+            toList.Add(segment);
+            SortChannelSegments(fromChannel);
+            SortChannelSegments(toChannel);
+            EnsureSegmentsValid();
+            return true;
+        }
+
+        /// <summary>
+        /// 查询指定通道当前是否包含任何有效动画片段。
+        /// </summary>
+        public bool HasAnyAnimationInChannel(MontageLayerChannel channel)
+        {
+            if (!IsChannelEnabled(channel)) return false;
+            var list = GetSegments(channel);
+            if (list == null || list.Count == 0) return false;
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (list[i]?.Clip != null) return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 评估指定动画轨道在当前绝对时间戳下的活跃片段、采样时间与归一化混合权重。
+        /// 【核心设计】：在动画空白区（Gap）干脆不播放（输出空列表，权重自然归 0），绝不僵死锁定第一帧或最后一帧！
+        /// </summary>
+        public static void EvaluateSegments(
+            List<MontageAnimationSegment> segments,
             float timelineTime,
             List<int> outIndices,
             List<float> outSampleTimes,
@@ -453,38 +726,24 @@ namespace Cwcbb.Tools.CwcMontage
             outSampleTimes.Clear();
             outWeights.Clear();
 
-            int count = _animationSegments != null ? _animationSegments.Count : 0;
+            int count = segments != null ? segments.Count : 0;
             if (count == 0)
             {
                 return;
             }
 
-            // 单个片段快速路径
-            if (count == 1)
-            {
-                var single = _animationSegments[0];
-                if (single?.Clip != null)
-                {
-                    outIndices.Add(0);
-                    outSampleTimes.Add(single.EvaluateLocalSampleTime(timelineTime));
-                    outWeights.Add(1.0f);
-                }
-                return;
-            }
-
-            // 多片段重叠与交叉混音计算
             float t = Mathf.Max(0.0f, timelineTime);
 
             // 1. 查找所有时间覆盖当前时间点 t 的片段
             for (int i = 0; i < count; i++)
             {
-                var seg = _animationSegments[i];
+                var seg = segments[i];
                 if (seg?.Clip == null) continue;
 
                 float start = seg.StartTime;
                 float end = seg.EndTime;
 
-                // 容差判定：处于片段区间内，或到达最后一个片段末端
+                // 容差判定：严格处于片段区间内 [start, end)
                 bool isInside = (t >= start && t < end) || (i == count - 1 && t >= end && Mathf.Abs(t - end) < 0.001f);
                 if (isInside)
                 {
@@ -492,47 +751,10 @@ namespace Cwcbb.Tools.CwcMontage
                 }
             }
 
-            // 2. 若当前落在两段片段之间的间隙或头部/尾部外
+            // 2. 若当前落在片段之外或两段片段之间的空白缝隙（Gap）
             if (outIndices.Count == 0)
             {
-                // 落在第一个有效片段之前：保持首个片段的第 0 帧起首姿态
-                if (t < _animationSegments[0].StartTime)
-                {
-                    outIndices.Add(0);
-                    outSampleTimes.Add(_animationSegments[0].EvaluateLocalSampleTime(_animationSegments[0].StartTime));
-                    outWeights.Add(1.0f);
-                    return;
-                }
-
-                // 落在最后一个片段之后：保持末尾片段的末尾帧姿态
-                int lastIdx = count - 1;
-                if (t >= _animationSegments[lastIdx].EndTime)
-                {
-                    outIndices.Add(lastIdx);
-                    outSampleTimes.Add(_animationSegments[lastIdx].EvaluateLocalSampleTime(_animationSegments[lastIdx].EndTime));
-                    outWeights.Add(1.0f);
-                    return;
-                }
-
-                // 落在两段动画之间的真空期（Gap）：
-                // 严格停留在紧邻的前一片段的末尾帧姿态（Hold Last Frame），绝不跳变至后一片段首帧
-                int preIdx = 0;
-                for (int i = 0; i < count; i++)
-                {
-                    if (_animationSegments[i].EndTime <= t)
-                    {
-                        preIdx = i;
-                    }
-                    else
-                    {
-                        break;
-                    }
-                }
-
-                var preSeg = _animationSegments[preIdx];
-                outIndices.Add(preIdx);
-                outSampleTimes.Add(preSeg.EvaluateLocalSampleTime(preSeg.EndTime));
-                outWeights.Add(1.0f);
+                // 空白区域不输出任何动画姿态，由底层自然接管，权重彻底归 0
                 return;
             }
 
@@ -540,9 +762,16 @@ namespace Cwcbb.Tools.CwcMontage
             if (outIndices.Count == 1)
             {
                 int idx = outIndices[0];
-                var seg = _animationSegments[idx];
+                var seg = segments[idx];
+                bool hasPrev = HasContinuousPreviousSegment(segments, idx);
+                bool hasNext = HasContinuousNextSegment(segments, idx);
+
+                float inFactor = hasPrev ? 1.0f : seg.CalculateFadeInFactor(t);
+                float outFactor = hasNext ? 1.0f : seg.CalculateFadeOutFactor(t);
+                float weight = Mathf.Min(inFactor, outFactor);
+
                 outSampleTimes.Add(seg.EvaluateLocalSampleTime(t));
-                outWeights.Add(1.0f);
+                outWeights.Add(weight);
                 return;
             }
 
@@ -551,14 +780,13 @@ namespace Cwcbb.Tools.CwcMontage
             {
                 int idxA = outIndices[0];
                 int idxB = outIndices[1];
-                var segA = _animationSegments[idxA];
-                var segB = _animationSegments[idxB];
+                var segA = segments[idxA];
+                var segB = segments[idxB];
 
-                // 严格保证 prevSeg 为起点较早者，nextSeg 为起点较晚者
                 int prevIdx = segA.StartTime <= segB.StartTime ? idxA : idxB;
                 int nextIdx = segA.StartTime <= segB.StartTime ? idxB : idxA;
-                var prevSeg = _animationSegments[prevIdx];
-                var nextSeg = _animationSegments[nextIdx];
+                var prevSeg = segments[prevIdx];
+                var nextSeg = segments[nextIdx];
 
                 float overlapStart = nextSeg.StartTime;
                 float overlapEnd = Mathf.Min(prevSeg.EndTime, nextSeg.EndTime);
@@ -580,6 +808,20 @@ namespace Cwcbb.Tools.CwcMontage
                     nextWeight = 0.5f;
                 }
 
+                // 连续性判定：
+                // prevSeg 在交叉区是过渡给 nextSeg，因此绝不触发自身的出点淡出；
+                // nextSeg 在交叉区是由 prevSeg 接管而来，因此绝不触发自身的入点淡入；
+                // 仅当整段重叠链条本身处于起止边缘时，才考虑外部边缘淡入淡出：
+                bool prevHasPrev = HasContinuousPreviousSegment(segments, prevIdx);
+                bool nextHasNext = HasContinuousNextSegment(segments, nextIdx);
+
+                float chainInFactor = prevHasPrev ? 1.0f : prevSeg.CalculateFadeInFactor(t);
+                float chainOutFactor = nextHasNext ? 1.0f : nextSeg.CalculateFadeOutFactor(t);
+                float chainEdgeFactor = Mathf.Min(chainInFactor, chainOutFactor);
+
+                prevWeight *= chainEdgeFactor;
+                nextWeight *= chainEdgeFactor;
+
                 outIndices[0] = prevIdx;
                 outIndices[1] = nextIdx;
 
@@ -595,9 +837,121 @@ namespace Cwcbb.Tools.CwcMontage
             float uniformWeight = 1.0f / outIndices.Count;
             for (int k = 0; k < outIndices.Count; k++)
             {
-                var seg = _animationSegments[outIndices[k]];
+                var seg = segments[outIndices[k]];
                 outSampleTimes.Add(seg.EvaluateLocalSampleTime(t));
                 outWeights.Add(uniformWeight);
+            }
+        }
+
+        private static bool HasContinuousPreviousSegment(List<MontageAnimationSegment> segments, int index)
+        {
+            if (segments == null || index < 0 || index >= segments.Count) return false;
+            var cur = segments[index];
+            if (cur?.Clip == null) return false;
+
+            for (int i = 0; i < segments.Count; i++)
+            {
+                if (i == index) continue;
+                var other = segments[i];
+                if (other?.Clip == null) continue;
+                if (other.StartTime < cur.StartTime && other.EndTime >= cur.StartTime - 0.001f)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static bool HasContinuousNextSegment(List<MontageAnimationSegment> segments, int index)
+        {
+            if (segments == null || index < 0 || index >= segments.Count) return false;
+            var cur = segments[index];
+            if (cur?.Clip == null) return false;
+
+            for (int i = 0; i < segments.Count; i++)
+            {
+                if (i == index) continue;
+                var other = segments[i];
+                if (other?.Clip == null) continue;
+                if (other.EndTime > cur.EndTime && other.StartTime <= cur.EndTime + 0.001f)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// 评估全身主干动画片段（向后兼容主接口）。
+        /// </summary>
+        public void EvaluateAnimationSegments(
+            float timelineTime,
+            List<int> outIndices,
+            List<float> outSampleTimes,
+            List<float> outWeights)
+        {
+            EvaluateSegments(_animationSegments, timelineTime, outIndices, outSampleTimes, outWeights);
+        }
+
+        /// <summary>
+        /// 评估上半身动画片段。
+        /// </summary>
+        public void EvaluateUpperBodySegments(
+            float timelineTime,
+            List<int> outIndices,
+            List<float> outSampleTimes,
+            List<float> outWeights)
+        {
+            if (!_enableUpperBodyTrack)
+            {
+                outIndices?.Clear();
+                outSampleTimes?.Clear();
+                outWeights?.Clear();
+                return;
+            }
+            EvaluateSegments(_upperBodySegments, timelineTime, outIndices, outSampleTimes, outWeights);
+        }
+
+        /// <summary>
+        /// 评估叠加动画片段。
+        /// </summary>
+        public void EvaluateAdditiveSegments(
+            float timelineTime,
+            List<int> outIndices,
+            List<float> outSampleTimes,
+            List<float> outWeights)
+        {
+            if (!_enableAdditiveTrack)
+            {
+                outIndices?.Clear();
+                outSampleTimes?.Clear();
+                outWeights?.Clear();
+                return;
+            }
+            EvaluateSegments(_additiveSegments, timelineTime, outIndices, outSampleTimes, outWeights);
+        }
+
+        /// <summary>
+        /// 评估指定通道的动画片段。
+        /// </summary>
+        public void EvaluateChannelSegments(
+            MontageLayerChannel channel,
+            float timelineTime,
+            List<int> outIndices,
+            List<float> outSampleTimes,
+            List<float> outWeights)
+        {
+            switch (channel)
+            {
+                case MontageLayerChannel.UpperBody:
+                    EvaluateUpperBodySegments(timelineTime, outIndices, outSampleTimes, outWeights);
+                    break;
+                case MontageLayerChannel.FullBody:
+                    EvaluateAnimationSegments(timelineTime, outIndices, outSampleTimes, outWeights);
+                    break;
+                case MontageLayerChannel.Additive:
+                    EvaluateAdditiveSegments(timelineTime, outIndices, outSampleTimes, outWeights);
+                    break;
             }
         }
 

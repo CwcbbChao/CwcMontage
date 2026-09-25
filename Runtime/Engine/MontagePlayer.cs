@@ -50,6 +50,7 @@ namespace Cwcbb.Tools.CwcMontage
         private float _playbackRate = 1.0f;
         private float _currentWeight;
         private float _weightAtStop = 1.0f;
+        private float _customWeightMultiplier = 1.0f;
 
         private float _blendInTime;
         private AnimationCurve _blendInCurve;
@@ -70,6 +71,11 @@ namespace Cwcbb.Tools.CwcMontage
         /// 关联的源蒙太奇配置资产。
         /// </summary>
         public MontageSequenceSO SourceAsset => _sourceAsset;
+
+        /// <summary>
+        /// 关联的源蒙太奇配置资产快捷别名。
+        /// </summary>
+        public MontageSequenceSO Sequence => _sourceAsset;
 
         /// <summary>
         /// 目标宿主 GameObject。
@@ -121,6 +127,15 @@ namespace Cwcbb.Tools.CwcMontage
         /// 当前该动画在混音器中的计算权重 [0.0, 1.0]。
         /// </summary>
         public float CurrentWeight => _currentWeight;
+
+        /// <summary>
+        /// 外部自定义播放权重倍率 [0.0, 1.0]。
+        /// </summary>
+        public float CustomWeight
+        {
+            get => _customWeightMultiplier;
+            set => _customWeightMultiplier = Mathf.Clamp01(value);
+        }
 
         /// <summary>
         /// 当前所处的物理分段索引。
@@ -465,7 +480,7 @@ namespace Cwcbb.Tools.CwcMontage
                 float blendOutDuration = Mathf.Max(0.0001f, _blendOutTime);
                 float t = Mathf.Clamp01(_currentBlendOutTime / blendOutDuration);
                 float decay = _blendOutCurve != null ? Mathf.Clamp01(1f - _blendOutCurve.Evaluate(t)) : (1f - t);
-                return Mathf.Clamp01(_weightAtStop * decay);
+                return Mathf.Clamp01(_weightAtStop * decay * _customWeightMultiplier);
             }
 
             // 2. 正常播放期（Playing）
@@ -491,7 +506,15 @@ namespace Cwcbb.Tools.CwcMontage
                 }
             }
 
-            return Mathf.Min(inWeight, outWeight);
+            return Mathf.Clamp01(Mathf.Min(inWeight, outWeight) * _customWeightMultiplier);
+        }
+
+        /// <summary>
+        /// 动态设置外部自定义播放权重倍率 [0.0, 1.0]。
+        /// </summary>
+        public void SetCustomWeight(float weight)
+        {
+            _customWeightMultiplier = Mathf.Clamp01(weight);
         }
 
         /// <summary>
@@ -671,6 +694,23 @@ namespace Cwcbb.Tools.CwcMontage
         }
 
         /// <summary>
+        /// 评估指定通道的动画片段（支持 UpperBody、FullBody、Additive）。
+        /// 零 GC 内存分配。
+        /// </summary>
+        public void EvaluateChannelSegments(
+            MontageLayerChannel channel,
+            List<int> outIndices,
+            List<float> outSampleTimes,
+            List<float> outWeights)
+        {
+            if (_sourceAsset == null) return;
+            float evalTime = _sourceAsset.IsLooping && TotalDuration > 0.0001f
+                ? (_elapsedTime % TotalDuration)
+                : _elapsedTime;
+            _sourceAsset.EvaluateChannelSegments(channel, evalTime, outIndices, outSampleTimes, outWeights);
+        }
+
+        /// <summary>
         /// 设置全局播放速率倍率。
         /// </summary>
         public void SetPlaybackRate(float rate)
@@ -712,8 +752,8 @@ namespace Cwcbb.Tools.CwcMontage
         {
             if (_state != MontagePlayerState.Playing) return;
 
-            // 锁存打断瞬间的实际权重，保证淡出曲线具备连续性
-            _weightAtStop = Mathf.Clamp01(_currentWeight);
+            // 锁存打断瞬间单一权威时钟计算出的平滑目标权重，彻底摆脱对外部局部图层覆写 _currentWeight 的依赖
+            _weightAtStop = Mathf.Clamp01(CalculateTargetWeight());
             _state = MontagePlayerState.Stopping;
             _blendOutTime = Mathf.Max(0.0001f, customBlendOutTime ?? _sourceAsset.DefaultBlendOutTime);
             _currentBlendOutTime = 0f;
