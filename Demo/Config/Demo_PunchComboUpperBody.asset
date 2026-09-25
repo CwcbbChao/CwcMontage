@@ -19,7 +19,7 @@ MonoBehaviour:
     _startTime: 0
     _startOffset: 0
     _endOffset: 0
-    _duration: 1.3333334
+    _duration: 1.1666667
     _blendCurve:
       serializedVersion: 2
       m_Curve:
@@ -100,7 +100,7 @@ MonoBehaviour:
   _additiveWeight: 1
   _additiveSegments:
   - _clip: {fileID: -245273357908900549, guid: a0ee339482ca65344a511b7983d67fd8, type: 3}
-    _startTime: 0.73333335
+    _startTime: 0.70000005
     _startOffset: 0
     _endOffset: 0
     _duration: 0.33333334
@@ -261,7 +261,7 @@ MonoBehaviour:
         _isEnabled: 1
         _targetBone: 0
         _attachMode: 0
-        _positionOffset: {x: 0, y: 1.37, z: 1}
+        _positionOffset: {x: 0, y: 1.2, z: 1}
         _rotationOffset: {x: 0, y: 0, z: 0}
         _scale: {x: 1, y: 1, z: 1}
         _vfxPrefab: {fileID: 4500418477058885171, guid: 30c6c747e88b174409061ceb622adfa3,

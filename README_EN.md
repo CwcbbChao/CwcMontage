@@ -14,21 +14,21 @@
 
 ## Overview
 
-`CwcMontage` is a lightweight, high-performance, pure presentation-layer animation montage system tailored for modern action games (ACT / ARPG / Top-Down) in Unity.
+`CwcMontage` is a lightweight, high-performance, presentation-layer animation montage system tailored for modern action games (ACT / ARPG / Top-Down) in Unity.
 
-Built natively upon Unity's **Playables API**, it adheres strictly to the **Dual-Track Pipeline** philosophy: external gameplay logic (e.g. State Machines, Gameplay Ability Systems) retains authoritative control over timing and gameplay state transitions, while `CwcMontage` orchestrates precise animation sampling, smooth cross-fading, multi-track audio/VFX dispatching, and Root Motion delegation.
+Built natively on Unity's **Playables API**, it decouples the **animation presentation layer from gameplay combat logic**: external state machines or ability systems drive gameplay decisions and state transitions, while `CwcMontage` orchestrates precise multi-track timeline execution, smooth crossfading, section speed adjustments, and safe Root Motion delegation.
 
 ---
 
 ## Visual Showcase
 
 ### 1. Interactive Montage Timeline Editor
-Scrub sampling in real-time within the Scene View, zero-allocation preview, and intuitive physical section slicing:
+Precision scrubbing, real-time particle preview with deterministic simulation, multi-clip trimming, and section editing:
 
 ![Editor Overview](docs/public/images/editor_overview.gif)
 
-### 2. Runtime Cross-Fading & Section Control
-Dual-slot ping-pong cross-fade mixer, adaptive time warping, and guaranteed paired event execution:
+### 2. Runtime Crossfading & Section Control
+Pre-allocated dual-slot crossfade transitions, dynamic section speed adjustments, and guaranteed paired event execution:
 
 ![Runtime Demo](docs/public/images/runtime_demo.gif)
 
@@ -36,32 +36,31 @@ Dual-slot ping-pong cross-fade mixer, adaptive time warping, and guaranteed pair
 
 ## Key Features
 
-1. **Pure Presentation Layer & Open-Closed Principle (OCP)**
-   - The core runtime does not hardcode any gameplay or audio/VFX behaviors.
-   - Extend `MontageActionBlockBase` or `MontageSpatialActionBlockBase` to create custom hitboxes, freeze frames, audio clips, particle spawners, or camera shakes.
-2. **Multi-Track & Additive Pipeline (v1.1.0)**
-   - Native support for **Full Body**, **Upper Body**, and **Additive** concurrent tracks with independent mixer weights.
-   - Enables moving attacks, casting while running, and smoothly compounding hit flinches or firearm recoil over ongoing animations.
-3. **Real-time Spine Decoupled Root Rotation (v1.1.0)**
-   - Eliminates the industry pain point where upper-body casting is tilted by lower-body hip swaying/leaning.
-   - Requires zero DCC bone modifications. Utilizing a lightweight Dummy skeleton transient sampler and quaternion inverse transformations, any generic Humanoid asset works out of the box with 100% plug-and-play compatibility.
-4. **Editor Locomotion & Controller Preview (v1.1.0)**
-   - Built-in idle/run locomotion loop simulation directly inside the Timeline Editor, allowing WYSIWYG tuning of moving combat feel in the Scene View without entering Play mode.
-5. **Independent Clip Fade & Latched Stop (v1.1.0)**
-   - Clip-level independent crossfade that automatically bypasses edge fade for seamless continuous stitching;
-   - Interrupting playback latches internally computed self-consistent weights to guarantee smooth exit transitions without frame snapping.
-6. **Interval Sweep Sampling**
-   - Employs incremental half-open intervals `(LastTime, CurrentTime]` to evaluate active spans, eliminating missed events during severe frame-rate drops.
-   - Guarantees strict `OnEnter -> OnUpdate -> OnExit` lifecycle pairing with native support for scrubbing and seeking.
-7. **Native Geometric Physical Sections**
-   - Objectively geometric timestamp slicing without arbitrary semantic coupling (e.g. startup / active / recovery).
-   - $O(1)$ zero-allocation section duration queries and range testing.
-8. **Adaptive Time Warping**
-   - Drive target section durations dynamically via `handle.SyncSectionDuration(sectionIndex, targetDuration)`. The engine automatically scales the Playable playback rate to harmonize animation visual assets with design timing.
-9. **Fixed Dual-Slot Ping-Pong Mixer Topology**
-   - Features a permanent 2-slot cross-fade mixer graph. Eliminates dynamic node reconnections and array shifting for lifelong PlayableGraph stability and zero runtime GC allocations.
-10. **Root Motion Delegation**
-    - Dispatches horizontal, vertical, and rotational delta components via `IMontageRootMotionReceiver` or C# events, avoiding intrusive dependencies on existing movement controllers (e.g., CharacterController, KCC).
+1. **Decoupled Presentation & Combat Logic**
+   - The core runtime does not hardcode gameplay or skill rules, keeping presentation clean and modular.
+   - Inherit from `MontageActionBlockBase` or `MontageSpatialActionBlockBase` to implement custom audio, VFX, freeze-frames, camera shakes, or hitboxes.
+2. **Multi-Layer Mixer Topology (FullBody / UpperBody / Additive)**
+   - Organized via Playables API with native support for **Full Body**, **Upper Body**, and **Additive** concurrent layers with independent weight blending.
+   - Enables moving attacks, upper-body spellcasting while running, and compounding hit flinches or firearm recoil.
+3. **Upper-Body Spine Orientation Compensation**
+   - Solves the common engine pain point where upper-body aim/attack posture tilts and sways with lower-body hip movement.
+   - Dynamically counter-rotates and blends the Spine local rotation at runtime, allowing generic Humanoid animations to maintain accurate aiming without modifying DCC skeleton rigs.
+4. **Action Sections & Dynamic Speed Warping**
+   - Slices animations by simple timestamps without hardcoded stage enums, allowing gameplay logic to map phases flexibly.
+   - Dynamically adjust section durations via `handle.SyncSectionDuration(sectionIndex, targetDuration)` without re-exporting FBX clips.
+   - Supports external progress driving (`handle.EvaluateSectionProgress`) for charging attacks and combo cancels.
+5. **Half-Open Interval Sweep (Guaranteed Paired Events)**
+   - Evaluates active blocks using `(LastTime, CurrentTime]` intervals. Even across severe frame drops, `OnEnter` and `OnExit` execute in strict pairs to prevent lingering effects.
+6. **Pre-allocated Double-Buffered Slots (0 GC)**
+   - Each layer pre-allocates two alternating slots for smooth CrossFading, avoiding runtime graph restructuring, stalls, and heap allocations.
+7. **Generational Safety Handle (MontageHandle)**
+   - 16-byte readonly struct allocated on the stack (0 GC).
+   - Encapsulates a Generation ID; expired or recycled slots invalidate old handles automatically, eliminating dangling references.
+8. **Safe Root Motion Delegation**
+   - Dispatches filtered horizontal, vertical, and rotational delta components via `IMontageRootMotionReceiver` or C# events to external movement controllers (e.g., CharacterController) without mutating Transform directly.
+9. **Modern UI Toolkit Timeline Editor**
+   - Multi-track timeline with clip time-stretching, edge trimming, multi-tier magnetic snapping (snap to 0, playhead, sections, and clip edges), and cross-asset clipboard.
+   - Isolated 3D viewport using `PreviewRenderUtility` with deterministic particle scrubbing (`ps.Simulate`).
 
 ---
 

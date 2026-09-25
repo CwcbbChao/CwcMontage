@@ -5,8 +5,8 @@ using UnityEngine;
 namespace Cwcbb.Tools.CwcMontage
 {
     /// <summary>
-    /// 蒙太奇核心数据资产（ScriptableObject）。
-    /// 基于多片段动画轨道（MontageAnimationSegment）配置动画播放属性、淡入淡出曲线、Root Motion 开关、去语义化物理分段与多轨道表现块。
+    /// 蒙太奇配置资产（ScriptableObject）。
+    /// 配置动画片段列表、淡入淡出参数、Root Motion 过滤、动作分段与多轨道视听打点。
     /// </summary>
     [CreateAssetMenu(fileName = "Montage_", menuName = "Cwc/Montage/Montage Sequence")]
     public class MontageSequenceSO : ScriptableObject
@@ -16,31 +16,31 @@ namespace Cwcbb.Tools.CwcMontage
         [Tooltip("是否激活上半身动画轨道（配合角色移动）。")]
         [SerializeField] private bool _enableUpperBodyTrack;
 
-        [Tooltip("上半身动画层整体权重（0.0 ~ 1.0，用于控制上半身动作融合强弱）。")]
+        [Tooltip("上半身动画层整体权重（0.0 ~ 1.0）。")]
         [Range(0f, 1f)]
         [SerializeField] private float _upperBodyWeight = 1.0f;
 
         [Tooltip("上半身动画片段列表。")]
         [SerializeField] private List<MontageAnimationSegment> _upperBodySegments = new();
 
-        [Tooltip("全身核心动画层整体权重（0.0 ~ 1.0，主层默认 1.0）。")]
+        [Tooltip("全身动画层整体权重（0.0 ~ 1.0，主层默认 1.0）。")]
         [Range(0f, 1f)]
         [SerializeField] private float _fullBodyWeight = 1.0f;
 
-        [Tooltip("全身核心动画片段列表（默认常开主轨道，大幅度转身/大招/翻滚）。")]
+        [Tooltip("全身动画片段列表（默认常开主轨道，用于大幅度攻击/大招/翻滚等）。")]
         [SerializeField] private List<MontageAnimationSegment> _animationSegments = new();
 
-        [Tooltip("是否激活受击/抖动叠加动画轨道。")]
+        [Tooltip("是否激活受击/抖动等叠加动画轨道。")]
         [SerializeField] private bool _enableAdditiveTrack;
 
-        [Tooltip("叠加动画层整体权重（0.0 ~ 1.0，用于控制受击、抖动等叠加姿态的强弱）。")]
+        [Tooltip("叠加动画层整体权重（0.0 ~ 1.0）。")]
         [Range(0f, 1f)]
         [SerializeField] private float _additiveWeight = 1.0f;
 
         [Tooltip("叠加动画片段列表。")]
         [SerializeField] private List<MontageAnimationSegment> _additiveSegments = new();
 
-        [Tooltip("是否开启上半身基准骨骼相对根节点姿态解耦（消除下半身奔跑前倾与晃动，100% 还原源动画中侧身劈砍、斜斩等真实体态）。")]
+        [Tooltip("是否启用上半身脊柱（Spine）朝向补偿。消除跑步时骨盆晃动对上半身出招朝向的偏转污染。")]
         [SerializeField] private bool _decoupleUpperBodyOrientation = true;
 
         [HideInInspector]
@@ -84,8 +84,8 @@ namespace Cwcbb.Tools.CwcMontage
         [Tooltip("是否应用根运动旋转。")]
         [SerializeField] private bool _applyRotationRootMotion;
 
-        [Header("Physical Sections")]
-        [Tooltip("时间轴切分点时间戳列表（秒）。按升序排列，N 个切分点将动画严格划分为 N + 1 个连续分段。")]
+        [Header("Sections")]
+        [Tooltip("分段切分时间戳（秒）。N 个切分点将动画划分为 N + 1 个连续分段。")]
         [SerializeField] private List<float> _splitTimestamps = new();
 
         [Header("Tracks & Action Blocks")]

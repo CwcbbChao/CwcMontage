@@ -4,7 +4,7 @@ layout: home
 hero:
   name: "CwcMontage"
   text: "高性能纯表现层动作蒙太奇系统"
-  tagline: "基于 Unity Playables API 构建。逻辑与表现双轨分离，区间扫掠无漏帧，双缓冲平滑混音，原生支持 Root Motion 解耦。"
+  tagline: "专为 Unity 动作游戏打造的轻量级动画蒙太奇插件。基于 Playables API 构建，表现层与战斗逻辑彻底解耦，支持预分配双插槽平滑过渡与 Root Motion 安全派发。"
   image:
     src: /images/editor_overview.gif
     alt: CwcMontage Overview
@@ -21,21 +21,21 @@ hero:
 
 features:
   - icon: ⚡
-    title: 逻辑与表现双轨分离
-    details: 核心运行时不绑定任何具体技能或数值逻辑，由外部系统全权主导状态流转，专注于极致的动作表现采样与视听调度。
+    title: 表现层与战斗逻辑解耦
+    details: 核心系统专注于动画采样与视听打点，由外部状态机或技能系统驱动动作流转与判定，架构职责清晰。
   - icon: 🎯
-    title: 区间扫掠无漏帧算法
-    details: 采用增量半开区间 (LastTime, CurrentTime] 判定，在 10 FPS 极端丢帧卡顿下依然确保所有动作块成对触发，杜绝漏事件。
+    title: 半开区间扫掠防漏帧
+    details: 采用 (LastTime, CurrentTime] 区间判定，低帧率或卡顿跨越事件块时保证 OnEnter 与 OnExit 严格成对触发，杜绝特效残留。
   - icon: 🔄
-    title: 固定双缓冲槽 Ping-Pong 混音
-    details: 摒弃动态销毁与数组重排，采用常驻双节点交叉淡化（CrossFade）混音拓扑，PlayableGraph 终身稳定且零 GC。
+    title: 预分配双插槽平滑过渡
+    details: 每个图层预分配两个 Slot 处理 CrossFade，运行时无需频繁增删 Playable 节点，无拓扑重建卡顿且保证 0 GC。
   - icon: ⏱️
-    title: 去语义化分段与自适应时钟
-    details: 资产仅做客观几何切分，外部逻辑调用 SyncSectionDuration 即可自适应缩放 Playable 速率，消除美术动作与数值时长的冲突。
+    title: 动作分段与动态调速
+    details: 资产仅划分时间区间，外部可通过 SyncSectionDuration 动态调整分段播放速率或以进度驱动蓄力，无需美术反复重导动画。
   - icon: 🏃
-    title: Root Motion 委托化解耦
-    details: 掩码过滤位移与旋转分量，通过 IMontageRootMotionReceiver 委托抛出，零侵入现有物理角色移动控制器。
+    title: Root Motion 委托派发
+    details: 支持水平、垂直与旋转分量独立过滤，位移增量交由外部物理移动组件处理，避免直接修改 Transform 导致穿墙。
   - icon: 🛠️
     title: 可视化时间轴多轨编辑器
-    details: 完整的 Unity 编辑器窗口，支持多轨道拖拽、视口实时洗牌（Scrubbing）采样预览、吸附对齐工具与零开销调试。
+    details: 基于 UI Toolkit 开发，支持多轨道拖拽、动画片段调速与修剪、多级磁吸对齐，以及 3D 视口粒子绝对时间切片预览。
 ---

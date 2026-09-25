@@ -4,34 +4,30 @@ using UnityEngine;
 namespace Cwcbb.Tools.CwcMontage
 {
     /// <summary>
-    /// 蒙太奇空间附着与位置更新模式。
-    /// 所有跟随模式均由代码在外部实时驱动世界变换，绝不挂载为角色骨骼子节点，杜绝角色缩放污染与骨骼层级脏化。
+    /// 空间附着模式。
+    /// 通过外部代码同步目标骨骼的世界变换，不挂载为骨骼子节点，避免受角色骨骼非等比缩放影响。
     /// </summary>
     public enum MontageAttachMode
     {
         /// <summary>
-        /// 外部驱动实时同步目标骨骼的世界位置与世界旋转（默认模式）。
-        /// 始终保持在世界独立层级，完全免疫角色的非等比缩放、形变与挤压。
+        /// 实时同步目标骨骼的世界位置与世界旋转（默认模式）。
         /// </summary>
         FollowTarget = 0,
 
         /// <summary>
-        /// 外部驱动仅实时同步目标骨骼的世界位置，旋转保持世界固定。
-        /// 适用于地面范围指示圈、投影法阵等不随角色转身打转的表现。
+        /// 仅实时同步目标骨骼的世界位置，旋转保持世界固定（适用于地面光圈/法阵等）。
         /// </summary>
         FollowPositionOnly = 1,
 
         /// <summary>
-        /// 仅在触发瞬间快照世界坐标与世界旋转，之后固定在原地，不随角色移动。
-        /// 适用于极少数原地停留的表现（如地面落点法阵残留）。
+        /// 仅在触发瞬间记录目标世界坐标与旋转，之后固定在原地。
         /// </summary>
         WorldPositionAtStart = 2
     }
 
     /// <summary>
-    /// 具有空间位置、骨骼挂载与变换更新能力的动作块抽象基类（MontageSpatialActionBlockBase）。
-    /// 为 VFXActionBlock、PrefabSpawnActionBlock 等视效与实体生成块提供 8 核心骨骼绑定、
-    /// 局部偏移计算与外部驱动的零侵入动态位置同步支持。
+    /// 具备空间挂载与位置同步能力的动作块抽象基类。
+    /// 为 VFXActionBlock、PrefabSpawnActionBlock 等提供骨骼挂点绑定、局部偏移计算与位置同步支持。
     /// </summary>
     [Serializable]
     public abstract class MontageSpatialActionBlockBase : MontageActionBlockBase
@@ -39,10 +35,10 @@ namespace Cwcbb.Tools.CwcMontage
         #region Inspector 字段
 
         [Header("Attachment & Transform")]
-        [Tooltip("目标挂点骨骼（精简收敛为 8 个人形核心大骨骼，100% 自动适配所有 Humanoid 模型）。")]
+        [Tooltip("目标挂点骨骼（支持 8 个人形常用核心骨骼与 Root）。")]
         [SerializeField] private MontageTargetBone _targetBone = MontageTargetBone.Root;
 
-        [Tooltip("附着与位置更新模式：默认采用外部驱动实时跟随目标骨骼。")]
+        [Tooltip("附着与位置同步模式。")]
         [SerializeField] private MontageAttachMode _attachMode = MontageAttachMode.FollowTarget;
 
         [Tooltip("相对于目标挂点的局部位置偏移。")]

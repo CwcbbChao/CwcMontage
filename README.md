@@ -14,21 +14,21 @@
 
 ## 插件简介
 
-`CwcMontage` 是一个专为现代高品质动作游戏（ACT / ARPG / TopDown）量身定制的**轻量化、高性能、纯表现层**动作蒙太奇系统。
+`CwcMontage` 是一个专为 Unity 动作游戏（ACT / ARPG / Top-Down）打造的**轻量级、高性能、纯表现层**动作蒙太奇系统。
 
-系统基于 Unity **Playables API** 构建，采用**逻辑与表现双轨分离（Dual-Track Pipeline）**设计理念：外部逻辑层（如 Gameplay 技能系统、状态机）绝对主导动作判定与时钟流向，而 `CwcMontage` 负责精确的动画采样、平滑混音、多轨道视听触发以及 Root Motion 委托分发。
+系统基于 Unity **Playables API** 构建，将**动画表现层与战斗玩法逻辑彻底解耦**：外部状态机或技能系统负责业务判定与节奏调度，`CwcMontage` 专注于多轨道视听打点、动画片段平滑过渡、分段变速以及 Root Motion 的安全派发。
 
 ---
 
 ## 视觉与交互演示
 
 ### 1. 蒙太奇时间轴编辑器 (Montage Editor)
-实时视口洗牌（Scrubbing）采样、零开销视听效果预览与物理分段编辑：
+支持时间轴拖拽（Scrubbing）精准采样、粒子特效实时切片预览、多片段修剪与分段编辑：
 
 ![Editor Overview](docs/public/images/editor_overview.gif)
 
 ### 2. 运行时平滑混音与分段控制 (Runtime Showcase)
-双缓冲槽 Ping-Pong 交叉淡化、自适应时钟缩放与事件成对触发：
+预分配双插槽 CrossFade 平滑过渡、分段动态调速与事件防丢帧触发：
 
 ![Runtime Demo](docs/public/images/runtime_demo.gif)
 
@@ -36,32 +36,31 @@
 
 ## 核心设计特性
 
-1. **纯表现层与开闭原则 (OCP)**
-   - 核心运行时完全解耦具体业务逻辑，零侵入硬编码。
-   - 提供 `MontageActionBlockBase` 与 `MontageSpatialActionBlockBase`，开发者可自由扩展音效、特效、顿帧、相机震动或受击盒判定。
-2. **多层级分层与叠加混音 (Multi-Track & Additive Pipeline - v1.1.0)**
-   - 原生支持**全身 (Full Body)**、**上半身 (Upper Body)**、**叠加 (Additive)** 三轨并行独立混音与权重控制。
-   - 满足边跑边打、移动施法，以及在大招或奔跑状态下复合受击抖动、开火后坐力等高品质战斗需求。
-3. **上半身腰部实时解耦旋转算法 (Spine Decoupled Root Rotation - v1.1.0)**
-   - 彻底攻克移动中上半身出招姿态被骨盆摇摆前倾污染的业界痛点。
-   - 告别传统方案对 DCC 专用腰部骨骼的破坏性魔改，底层借助轻量纯骨骼 Dummy 瞬态采样与四元数逆变换，现成通用 Humanoid 动作 100% 零修改即插即用。
-4. **编辑器底层移动循环模拟 (Locomotion & Controller Preview - v1.1.0)**
-   - 时间轴编辑器内置底层待机/奔跑循环模拟，无需运行游戏即可在 Scene 视口所见即所得调试移动出招手感与混合姿态。
-5. **片段独立平滑过渡与打断锁存 (Independent Clip Fade & Latched Stop - v1.1.0)**
-   - 片段级独立淡入淡出，相邻连续片段自动无缝平滑串联，彻底消除边缘权重塌陷；
-   - 任意时刻打断播放基于内部自洽时钟锁存插值，彻底消除生硬抽帧切回。
-6. **区间扫掠无漏帧算法 (Interval Sweep Sampling)**
-   - 采用增量半开区间 `(LastTime, CurrentTime]` 判定，彻底杜绝在极端低帧率卡顿下跳帧漏事件的问题。
-   - 保证所有动作块的 `OnEnter -> OnUpdate -> OnExit` 严格成对触发，原生支持倒放与瞬移 Seek。
-7. **去语义化物理分段 (Native Physical Sections)**
-   - 仅做客观时间切分，不预设前摇/后摇/击发点等硬编码业务语义。
-   - 提供 $O(1)$ 零 GC 分段时长查询与范围检测。
-8. **分段自适应时钟缩放 (Adaptive Time Warping)**
-   - 外部调用 `handle.SyncSectionDuration(sectionIndex, targetDuration)`，底层根据原始动作几何时长自适应换算并平滑驱动 Playable 播放速率，化解策划数值与动作美术资产的冲突。
-9. **固定双缓冲槽 CrossFade 混音拓扑 (Dual-Slot Ping-Pong Mixer)**
-   - 采用固定 2 槽双缓冲结构进行 CrossFade 平滑过渡，彻底淘汰动态断连与数组移位，PlayableGraph 终身稳定且零 GC。
-10. **Root Motion 委托化解耦分发**
-    - 掩码过滤水平/垂直/旋转分量后，通过 `IMontageRootMotionReceiver` 接口或事件抛出，不污染角色现有的物理移动控制器（如 CharacterController 或 KCC）。
+1. **专注表现层，与战斗玩法逻辑解耦**
+   - 核心系统不绑定任何具体技能或数值逻辑，由外部系统驱动播放与跳转。
+   - 提供 `MontageActionBlockBase` 与 `MontageSpatialActionBlockBase`，开发者可自由扩展音效、特效、顿帧、相机震动或伤害判定盒。
+2. **多层级混音拓扑 (FullBody / UpperBody / Additive)**
+   - 基于 Playables API 组织图层，原生支持**全身 (Full Body)**、**上半身 (Upper Body)** 与**叠加 (Additive)** 三轨并行独立混音与权重控制。
+   - 满足边跑边打、移动施法，以及在奔跑或大招时叠加受击抖动、开火后坐力等战斗需求。
+3. **上半身脊柱 (Spine) 朝向补偿**
+   - 针对 Humanoid 角色边跑边打时上半身随骨盆剧烈晃动、劈砍瞄准歪斜的引擎痛点。
+   - 运行时通过源动画 Spine 相对 Root 旋转反解并修正局部朝向，通用 Humanoid 动作无需在 DCC 建模软件中重修骨骼即可保持稳定朝向。
+4. **动作分段 (Sections) 与动态调速**
+   - 资产仅记录时间切分点，不写死前摇/判定/后摇枚举，由玩法逻辑按需映射。
+   - 支持外部调用 `handle.SyncSectionDuration(sectionIndex, targetDuration)` 动态调整指定分段的播放速率，便于策划调整打击帧与动作节奏而无需美术重新导出动画。
+   - 支持外部进度驱动（`handle.EvaluateSectionProgress`），便于实现按键蓄力与连招取消。
+5. **半开区间扫掠，事件严格成对触发**
+   - 采用 `(LastTime, CurrentTime]` 半开区间判定，低帧率或卡顿跨越整个事件块时自动按序触发 `OnEnter` 与 `OnExit`，彻底杜绝特效或音效常驻残留。
+6. **预分配双插槽 (Double-Buffered Slots) 平滑过渡**
+   - 每个图层预分配两个 Slot 处理 CrossFade，运行时无需频繁增删 Playable 节点，消除拓扑重建卡顿且保证 0 GC 分配。
+7. **轻量代际安全句柄 (MontageHandle)**
+   - 16 字节值类型（`readonly struct`），纯栈分配，0 GC 开销。
+   - 封装代际版本号（Generation ID），动画结束或槽位复用后旧句柄自动失效，杜绝野指针与串号误操作。
+8. **Root Motion 委托派发**
+   - 支持水平、垂直与旋转分量独立过滤，将位移增量分发给 `CharacterController` 等物理组件，不直接修改 Transform，避免穿墙或物理失效。
+9. **现代 UI Toolkit 可视化时间轴编辑器**
+   - 支持多轨道拖拽、动画片段调速（Time Stretch）与修剪（Trim）、多级磁吸对齐（吸附 0 点/播放头/分段点/邻近块）、跨资产复制粘贴。
+   - 内置基于 `PreviewRenderUtility` 的独立 3D 视口，时间轴拖拽时粒子系统支持绝对时间切片预览（`ps.Simulate`）。
 
 ---
 
@@ -97,15 +96,15 @@ public class HeroCombatController : MonoBehaviour
 
     public void PerformAttack(float windupDuration, float activeDuration, float recoveryDuration)
     {
-        // 1. 启动蒙太奇播放，获取智能安全句柄 (MontageHandle，16 字节值类型，零 GC)
+        // 1. 启动蒙太奇播放，获取轻量安全句柄 (MontageHandle，值类型，0 GC)
         MontageHandle handle = _coordinator.Play(_swordAttackMontage);
 
-        // 2. 根据玩法数值，自适应缩放各物理分段的目标物理时长
+        // 2. 结合玩法数值，动态调整各分段的实际播放时长
         if (handle.IsValid)
         {
-            handle.SyncSectionDuration(0, windupDuration);    // 前摇段自适应
-            handle.SyncSectionDuration(1, activeDuration);    // 攻击判定段自适应
-            handle.SyncSectionDuration(2, recoveryDuration);  // 后摇段自适应
+            handle.SyncSectionDuration(0, windupDuration);    // 动态调整前摇时长
+            handle.SyncSectionDuration(1, activeDuration);    // 动态调整判定段时长
+            handle.SyncSectionDuration(2, recoveryDuration);  // 动态调整收招后摇时长
         }
     }
 }

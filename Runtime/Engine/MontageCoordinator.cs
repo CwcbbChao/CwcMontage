@@ -24,10 +24,9 @@ namespace Cwcbb.Tools.CwcMontage
     }
 
     /// <summary>
-    /// 蒙太奇全局驱动协调器组件（MonoBehaviour）。
-    /// 专为人形（Humanoid）角色设计的高性能、零配置驱动核心。
-    /// 基于 Unity Playables API 构建固定四层拓扑结构（Locomotion -> UpperBody -> FullBody -> Additive），
-    /// 内置标准 Humanoid 上半身遮罩，实现动画与角色的完全解耦与无差异执行。
+    /// 蒙太奇角色驱动协调器组件（MonoBehaviour）。
+    /// 基于 Unity Playables API 构建四层混音拓扑（Locomotion -> UpperBody -> FullBody -> Additive），
+    /// 内置通用 Humanoid 上半身遮罩与脊柱朝向补偿，统一管理角色的蒙太奇播放与 Root Motion 分发。
     /// </summary>
     [DisallowMultipleComponent]
     [AddComponentMenu("Cwcbb/Montage/Montage Coordinator")]
@@ -351,7 +350,7 @@ namespace Cwcbb.Tools.CwcMontage
 
             MontageHandle mainHandle = MontageHandle.Invalid;
 
-            // 2. FullBody 霸权规则：若播放全身独占动作，主动通知旧 UpperBody 平滑打断淡出
+            // 2. 全身动作优先级：播放全身独占动作时，通知上半身动作平滑淡出
             if (hasFullBody)
             {
                 StopActiveSlot(_layerStates[0], blendInDuration);
@@ -957,7 +956,7 @@ namespace Cwcbb.Tools.CwcMontage
         {
             if (_animator == null || !_animator.isHuman || _layerStates.Count <= 0) return;
 
-            // 0. 若 FullBody (Layer 1) 正在播放且具有有效权重，FullBody 拥有霸权主导权，严禁篡改 Spine！
+            // 0. 若全身动作（FullBody）正在播放且具有有效权重，优先保持全身动作姿态，不执行 Spine 局部朝向修正
             if (_layerStates.Count > 1)
             {
                 var fullLayer = _layerStates[1];

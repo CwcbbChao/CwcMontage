@@ -26,8 +26,8 @@ namespace Cwcbb.Tools.CwcMontage
     }
 
     /// <summary>
-    /// 纯 C# 运行时蒙太奇播放器实例。
-    /// 作为单一权威时钟源（Master Clock），维护动画时间流逝、动力学权重计算、原子化区间扫掠判定与动作块生命周期。
+    /// 纯 C# 运行时蒙太奇播放器。
+    /// 维护动画播放时间推进、平滑权重计算、区间扫掠事件判定与动作块生命周期。
     /// </summary>
     public class MontagePlayer
     {
@@ -93,7 +93,7 @@ namespace Cwcbb.Tools.CwcMontage
         public MontagePlayerState State => _state;
 
         /// <summary>
-        /// 当前播放进行到的绝对时间戳（秒，单一权威时钟源）。
+        /// 当前播放已进行的绝对时间戳（秒）。
         /// </summary>
         public float ElapsedTime => _elapsedTime;
 
