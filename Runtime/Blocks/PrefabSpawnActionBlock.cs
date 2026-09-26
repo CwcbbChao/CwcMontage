@@ -26,15 +26,35 @@ namespace Cwcbb.Tools.CwcMontage
 
     /// <summary>
     /// 预制件生成与挂载动作块（PrefabSpawnActionBlock）。
-    /// 继承自 MontageSpatialActionBlockBase，具备完整的骨骼挂载、世界坐标固定、播放中动态追踪位置、
-    /// 生命周期托管与对象池回收能力，全面支持编辑器 3D 视口预览并确保离开时绝对无残留。
+    /// 继承自 MontageSpatialActionBlockBase<PrefabSpawnState>，具备骨骼挂载、世界坐标固定、播放中动态追踪位置、
+    /// 生命周期托管与对象池回收能力，资产 100% 只读化与运行时 0-GC。
     /// </summary>
     [Serializable]
     [MontageCategory("Gameplay")]
     [MontageDisplayName("Spawn Prefab")]
     [MontageColor("#32CD32")]
-    public class PrefabSpawnActionBlock : MontageSpatialActionBlockBase
+    public class PrefabSpawnActionBlock : MontageSpatialActionBlockBase<PrefabSpawnActionBlock.PrefabSpawnState>
     {
+        #region 内部状态定义 (纯运行时持有，随槽位复用)
+
+        /// <summary>
+        /// 预制件生成动作块运行时动态状态。
+        /// </summary>
+        public class PrefabSpawnState : MontageSpatialBlockState
+        {
+            public GameObject SpawnedInstance;
+            public float ElapsedTime;
+
+            public override void Reset()
+            {
+                base.Reset();
+                SpawnedInstance = null;
+                ElapsedTime = 0f;
+            }
+        }
+
+        #endregion
+
         #region Inspector 字段
 
         [Header("Prefab Reference")]
@@ -51,95 +71,88 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
 
-        #region 私有非序列化运行时字段
-
-        [NonSerialized] private GameObject _spawnedInstance;
-        [NonSerialized] private float _elapsedTime;
-
-        #endregion
-
         #region 公共属性
 
         public GameObject Prefab => _prefab;
         public MontageSpawnLifecycle Lifecycle => _lifecycle;
         public float CustomDuration => _customDuration;
-        public GameObject SpawnedInstance => _spawnedInstance;
+
+        /// <summary>
+        /// 兼容属性：仅在编辑器视口预览时返回当前预览生成的实例引用。运行时请通过 PrefabSpawnState 访问。
+        /// </summary>
+        public GameObject SpawnedInstance => GetEditorPreviewState()?.SpawnedInstance;
 
         #endregion
 
-        #region 运行时生命周期 (由 MontagePlayer 调度)
+        #region 运行时生命周期 (强类型 0-GC 调度)
 
         public override bool CanEnter(in MontageActionContext context)
         {
             return base.CanEnter(context) && _prefab != null;
         }
 
-        public override void OnEnter(in MontageActionContext context)
+        protected override void OnEnter(in MontageActionContext context, PrefabSpawnState state)
         {
-            base.OnEnter(context);
-
             if (_prefab == null)
             {
                 return;
             }
 
-            _elapsedTime = 0f;
+            state.ElapsedTime = 0f;
 
-            // 1. 基类解析挂点与计算空间变换
-            ResolveTargetBone(context);
-            CalculateWorldTransform(out Vector3 worldPos, out Quaternion worldRot);
+            // 1. 基类解析挂点与计算空间变换（写进 state，零 GC）
+            ResolveTargetBone(context, state);
+            CalculateWorldTransform(state, out Vector3 worldPos, out Quaternion worldRot);
             Transform attachParent = GetSpawnParent(context, isPreview: false);
 
             // 2. 从运行时对象池生成
-            _spawnedInstance = MontageObjectPool.Spawn(
+            state.SpawnedInstance = MontageObjectPool.Spawn(
                 _prefab,
                 worldPos,
                 worldRot,
                 attachParent,
                 1.0f);
 
-            if (_spawnedInstance == null)
+            if (state.SpawnedInstance == null)
             {
                 return;
             }
 
-            _spawnedInstance.transform.localScale = Vector3.Scale(_prefab.transform.localScale, Scale);
+            state.SpawnedInstance.transform.localScale = Vector3.Scale(_prefab.transform.localScale, Scale);
         }
 
-        public override void OnUpdate(in MontageActionContext context, float deltaTime)
+        protected override void OnUpdate(in MontageActionContext context, PrefabSpawnState state, float deltaTime)
         {
-            if (_spawnedInstance == null)
+            if (state.SpawnedInstance == null)
             {
                 return;
             }
 
             // 1. 基类统一处理播放中位置/旋转的动态追踪与更新
-            UpdateSpatialTransform(_spawnedInstance, in context);
+            UpdateSpatialTransform(state.SpawnedInstance, in context, state);
 
             // 2. 自定义时长倒计时回收
             if (_lifecycle == MontageSpawnLifecycle.CustomDuration)
             {
-                _elapsedTime += deltaTime;
-                if (_elapsedTime >= _customDuration)
+                state.ElapsedTime += deltaTime;
+                if (state.ElapsedTime >= _customDuration)
                 {
-                    MontageObjectPool.Recycle(_spawnedInstance);
-                    _spawnedInstance = null;
+                    MontageObjectPool.Recycle(state.SpawnedInstance);
+                    state.SpawnedInstance = null;
                 }
             }
         }
 
-        public override void OnExit(in MontageActionContext context)
+        protected override void OnExit(in MontageActionContext context, PrefabSpawnState state)
         {
-            if (_spawnedInstance != null)
+            if (state.SpawnedInstance != null)
             {
                 if (_lifecycle == MontageSpawnLifecycle.RecycleOnBlockExit)
                 {
-                    MontageObjectPool.Recycle(_spawnedInstance);
-                    _spawnedInstance = null;
+                    MontageObjectPool.Recycle(state.SpawnedInstance);
+                    state.SpawnedInstance = null;
                 }
             }
-
-            base.OnExit(context);
         }
 
         #endregion
@@ -155,68 +168,59 @@ namespace Cwcbb.Tools.CwcMontage
         {
             base.OnPreviewEnter(context);
 
-            if (_prefab == null)
-            {
-                return;
-            }
+            if (_prefab == null) return;
 
-            _elapsedTime = 0f;
+            var state = GetEditorPreviewState();
+            if (state == null) return;
 
-            // 1. 视口挂点解析与空间变换计算
-            ResolveTargetBone(context);
-            CalculateWorldTransform(out Vector3 worldPos, out Quaternion worldRot);
+            state.ElapsedTime = 0f;
+
+            ResolveTargetBone(context, state);
+            CalculateWorldTransform(state, out Vector3 worldPos, out Quaternion worldRot);
             Transform attachParent = GetSpawnParent(context, isPreview: true);
             if (attachParent == null && context.TargetObject != null)
             {
                 attachParent = context.TargetObject.transform;
             }
 
-            // 2. 在私有视口场景锚点下即时实例化，避免跨场景对象池污染
-            _spawnedInstance = UnityEngine.Object.Instantiate(
+            state.SpawnedInstance = UnityEngine.Object.Instantiate(
                 _prefab,
                 worldPos,
                 worldRot,
                 attachParent);
 
-            if (_spawnedInstance == null)
-            {
-                return;
-            }
+            if (state.SpawnedInstance == null) return;
 
-            _spawnedInstance.name = _prefab.name;
-            _spawnedInstance.hideFlags = HideFlags.HideAndDontSave;
-            _spawnedInstance.transform.localScale = Vector3.Scale(_prefab.transform.localScale, Scale);
+            state.SpawnedInstance.name = _prefab.name;
+            state.SpawnedInstance.hideFlags = HideFlags.HideAndDontSave;
+            state.SpawnedInstance.transform.localScale = Vector3.Scale(_prefab.transform.localScale, Scale);
         }
 
         public override void OnPreviewUpdate(in MontageActionContext context, float deltaTime)
         {
-            if (_spawnedInstance == null)
-            {
-                return;
-            }
+            var state = GetEditorPreviewState();
+            if (state == null || state.SpawnedInstance == null) return;
 
-            // 1. 视口动态位置更新
-            UpdateSpatialTransform(_spawnedInstance, in context);
+            UpdateSpatialTransform(state.SpawnedInstance, in context, state);
 
-            // 2. 自定义时长倒计时回收
             if (_lifecycle == MontageSpawnLifecycle.CustomDuration)
             {
-                _elapsedTime += deltaTime;
-                if (_elapsedTime >= _customDuration)
+                state.ElapsedTime += deltaTime;
+                if (state.ElapsedTime >= _customDuration)
                 {
-                    UnityEngine.Object.DestroyImmediate(_spawnedInstance);
-                    _spawnedInstance = null;
+                    UnityEngine.Object.DestroyImmediate(state.SpawnedInstance);
+                    state.SpawnedInstance = null;
                 }
             }
         }
 
         public override void OnPreviewExit(in MontageActionContext context)
         {
-            if (_spawnedInstance != null)
+            var state = GetEditorPreviewState();
+            if (state != null && state.SpawnedInstance != null)
             {
-                // 在编辑器预览模式下，强制即时安全销毁，杜绝视口残留孤儿对象
-                UnityEngine.Object.DestroyImmediate(_spawnedInstance);
-                _spawnedInstance = null;
+                UnityEngine.Object.DestroyImmediate(state.SpawnedInstance);
+                state.SpawnedInstance = null;
             }
 
             base.OnPreviewExit(context);
@@ -224,33 +228,27 @@ namespace Cwcbb.Tools.CwcMontage
 
         public override void OnPreviewScrub(in MontageActionContext context, float localTime)
         {
-            if (_spawnedInstance == null)
-            {
-                return;
-            }
+            var state = GetEditorPreviewState();
+            if (state == null || state.SpawnedInstance == null) return;
 
-            UpdateSpatialTransform(_spawnedInstance, in context);
-            _elapsedTime = localTime;
+            UpdateSpatialTransform(state.SpawnedInstance, in context, state);
+            state.ElapsedTime = localTime;
             if (_lifecycle == MontageSpawnLifecycle.CustomDuration)
             {
-                _spawnedInstance.SetActive(_elapsedTime < _customDuration);
+                state.SpawnedInstance.SetActive(state.ElapsedTime < _customDuration);
             }
         }
 
         public override void OnPreviewParametersChanged(in MontageActionContext context)
         {
-            if (_spawnedInstance == null)
-            {
-                return;
-            }
+            var state = GetEditorPreviewState();
+            if (state == null || state.SpawnedInstance == null) return;
 
-            // 原地更新挂点与空间位置
-            UpdatePreviewTransform(_spawnedInstance, in context);
+            UpdatePreviewTransform(state.SpawnedInstance, in context);
 
-            // 同步缩放
             if (_prefab != null)
             {
-                _spawnedInstance.transform.localScale = Vector3.Scale(_prefab.transform.localScale, Scale);
+                state.SpawnedInstance.transform.localScale = Vector3.Scale(_prefab.transform.localScale, Scale);
             }
         }
 

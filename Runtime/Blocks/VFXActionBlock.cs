@@ -21,15 +21,36 @@ namespace Cwcbb.Tools.CwcMontage
 
     /// <summary>
     /// 视觉特效表现动作块（VFXActionBlock）。
-    /// 继承自 MontageSpatialActionBlockBase，具备完整的骨骼挂载、世界坐标固定、播放中每帧动态追踪、
-    /// 模拟速率同步与对象池全自动管理能力，全面支持编辑器 3D 视口非运行模式下的实时粒子仿真演化预览。
+    /// 继承自 MontageSpatialActionBlockBase<VFXState>，运行时 0-GC 且资产完全只读化。
+    /// 支持骨骼挂载、世界坐标固定、播放中动态追踪、模拟速率同步与对象池全自动管理，
+    /// 全面支持编辑器 3D 视口非运行模式下的实时粒子仿真演化预览。
     /// </summary>
     [Serializable]
     [MontageCategory("Visual")]
     [MontageDisplayName("Play VFX")]
     [MontageColor("#FF8C00")]
-    public class VFXActionBlock : MontageSpatialActionBlockBase
+    public class VFXActionBlock : MontageSpatialActionBlockBase<VFXActionBlock.VFXState>
     {
+        #region 内部状态定义 (纯运行时持有，随槽位与对象池终身复用)
+
+        /// <summary>
+        /// 特效动作块运行时动态状态。
+        /// </summary>
+        public class VFXState : MontageSpatialBlockState
+        {
+            public GameObject SpawnedInstance;
+            public ParticleSystem[] CachedParticleSystems;
+
+            public override void Reset()
+            {
+                base.Reset();
+                SpawnedInstance = null;
+                CachedParticleSystems = null;
+            }
+        }
+
+        #endregion
+
         #region Inspector 字段
 
         [Header("VFX Prefab")]
@@ -52,10 +73,8 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
 
-        #region 私有非序列化运行时字段
+        #region 私有非序列化字段
 
-        [NonSerialized] private GameObject _spawnedInstance;
-        [NonSerialized] private ParticleSystem[] _cachedParticleSystems;
         [NonSerialized] private float _cachedNaturalDuration = -1f;
 
         #endregion
@@ -65,7 +84,11 @@ namespace Cwcbb.Tools.CwcMontage
         public GameObject VFXPrefab => _vfxPrefab;
         public MontageVFXStopBehavior StopBehavior => _stopBehavior;
         public bool PlaybackRateSynced => _playbackRateSynced;
-        public GameObject SpawnedInstance => _spawnedInstance;
+
+        /// <summary>
+        /// 兼容属性：仅在编辑器视口预览时返回当前预览生成的实例引用。运行时请通过 VFXState 访问。
+        /// </summary>
+        public GameObject SpawnedInstance => GetEditorPreviewState()?.SpawnedInstance;
 
         public override bool IsTrimmableClip => true;
 
@@ -83,67 +106,68 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
 
-        #region 运行时生命周期 (由 MontagePlayer 调度)
+        #region 运行时生命周期 (强类型 0-GC 调度)
 
         public override bool CanEnter(in MontageActionContext context)
         {
             return base.CanEnter(context) && _vfxPrefab != null;
         }
 
-        public override void OnEnter(in MontageActionContext context)
+        protected override void OnEnter(in MontageActionContext context, VFXState state)
         {
-            base.OnEnter(context);
-
             if (_vfxPrefab == null)
             {
                 return;
             }
 
-            // 1. 基类解析挂点与计算空间变换
-            ResolveTargetBone(context);
-            CalculateWorldTransform(out Vector3 worldPos, out Quaternion worldRot);
+            // 1. 基类解析挂点与计算空间变换（写进 state，零 GC）
+            ResolveTargetBone(context, state);
+            CalculateWorldTransform(state, out Vector3 worldPos, out Quaternion worldRot);
             Transform attachParent = GetSpawnParent(context, isPreview: false);
 
             // 2. 从运行时对象池取出实例
-            _spawnedInstance = MontageObjectPool.Spawn(
+            state.SpawnedInstance = MontageObjectPool.Spawn(
                 _vfxPrefab,
                 worldPos,
                 worldRot,
                 attachParent,
                 1.0f);
 
-            if (_spawnedInstance == null)
+            if (state.SpawnedInstance == null)
             {
                 return;
             }
 
-            _spawnedInstance.transform.localScale = Vector3.Scale(_vfxPrefab.transform.localScale, Scale);
+            state.SpawnedInstance.transform.localScale = Vector3.Scale(_vfxPrefab.transform.localScale, Scale);
 
-            // 3. 初始化并驱动 ParticleSystem（自适应 Block 长度的时间缩放倍率）
-            _cachedParticleSystems = _spawnedInstance.GetComponentsInChildren<ParticleSystem>(true);
+            // 3. 初始化并驱动 ParticleSystem
+            state.CachedParticleSystems = state.SpawnedInstance.GetComponentsInChildren<ParticleSystem>(true);
             float speedScale = GetStretchSpeedMultiplier();
             float simRate = speedScale * (_playbackRateSynced ? Mathf.Max(0.001f, context.PlaybackRate) : 1.0f);
 
-            for (int i = 0; i < _cachedParticleSystems.Length; i++)
+            for (int i = 0; i < state.CachedParticleSystems.Length; i++)
             {
-                var ps = _cachedParticleSystems[i];
-                var main = ps.main;
-                main.simulationSpeed = simRate;
-                ps.Play(true);
+                var ps = state.CachedParticleSystems[i];
+                if (ps != null)
+                {
+                    var main = ps.main;
+                    main.simulationSpeed = simRate;
+                    ps.Play(true);
+                }
             }
         }
 
-        public override void OnUpdate(in MontageActionContext context, float deltaTime)
+        protected override void OnUpdate(in MontageActionContext context, VFXState state, float deltaTime)
         {
-            if (_spawnedInstance == null)
+            if (state.SpawnedInstance == null)
             {
                 return;
             }
 
-            // 1. 基类统一处理播放中世界位置/旋转的动态跟随与更新
-            UpdateSpatialTransform(_spawnedInstance, in context);
+            // 1. 动态空间追踪与更新
+            UpdateSpatialTransform(state.SpawnedInstance, in context, state);
 
-            if (_cachedParticleSystems == null || _cachedParticleSystems.Length == 0)
+            if (state.CachedParticleSystems == null || state.CachedParticleSystems.Length == 0)
             {
                 return;
             }
@@ -151,9 +175,9 @@ namespace Cwcbb.Tools.CwcMontage
             // 2. 同步自适应缩放与播放速率变化
             float speedScale = GetStretchSpeedMultiplier();
             float simRate = speedScale * (_playbackRateSynced ? Mathf.Max(0.001f, context.PlaybackRate) : 1.0f);
-            for (int i = 0; i < _cachedParticleSystems.Length; i++)
+            for (int i = 0; i < state.CachedParticleSystems.Length; i++)
             {
-                var ps = _cachedParticleSystems[i];
+                var ps = state.CachedParticleSystems[i];
                 if (ps != null)
                 {
                     var main = ps.main;
@@ -162,15 +186,15 @@ namespace Cwcbb.Tools.CwcMontage
             }
         }
 
-        public override void OnExit(in MontageActionContext context)
+        protected override void OnExit(in MontageActionContext context, VFXState state)
         {
-            if (_spawnedInstance != null)
+            if (state.SpawnedInstance != null)
             {
-                if (_cachedParticleSystems != null)
+                if (state.CachedParticleSystems != null)
                 {
-                    for (int i = 0; i < _cachedParticleSystems.Length; i++)
+                    for (int i = 0; i < state.CachedParticleSystems.Length; i++)
                     {
-                        var ps = _cachedParticleSystems[i];
+                        var ps = state.CachedParticleSystems[i];
                         if (ps != null)
                         {
                             if (_stopBehavior == MontageVFXStopBehavior.ClearImmediately)
@@ -186,12 +210,11 @@ namespace Cwcbb.Tools.CwcMontage
                     }
                 }
 
-                MontageObjectPool.Recycle(_spawnedInstance);
-                _spawnedInstance = null;
+                MontageObjectPool.Recycle(state.SpawnedInstance);
+                state.SpawnedInstance = null;
             }
 
-            _cachedParticleSystems = null;
-            base.OnExit(context);
+            state.CachedParticleSystems = null;
         }
 
         #endregion
@@ -207,73 +230,62 @@ namespace Cwcbb.Tools.CwcMontage
         {
             base.OnPreviewEnter(context);
 
-            if (_vfxPrefab == null)
-            {
-                return;
-            }
+            if (_vfxPrefab == null) return;
 
-            // 1. 基类解析挂点与计算空间变换
-            ResolveTargetBone(context);
-            CalculateWorldTransform(out Vector3 worldPos, out Quaternion worldRot);
+            var state = GetEditorPreviewState();
+            if (state == null) return;
+
+            // 1. 解析挂点并计算空间变换
+            ResolveTargetBone(context, state);
+            CalculateWorldTransform(state, out Vector3 worldPos, out Quaternion worldRot);
             Transform attachParent = GetSpawnParent(context, isPreview: true);
             if (attachParent == null && context.TargetObject != null)
             {
                 attachParent = context.TargetObject.transform;
             }
 
-            // 2. 在私有视口场景锚点下即时实例化，避免跨场景对象池污染
-            _spawnedInstance = UnityEngine.Object.Instantiate(
-                _vfxPrefab,
-                worldPos,
-                worldRot,
-                attachParent);
+            // 2. 编辑器视口临时实例化（隔离场景）
+            state.SpawnedInstance = UnityEngine.Object.Instantiate(_vfxPrefab, worldPos, worldRot, attachParent);
+            if (state.SpawnedInstance == null) return;
 
-            if (_spawnedInstance == null)
-            {
-                return;
-            }
+            state.SpawnedInstance.name = _vfxPrefab.name;
+            state.SpawnedInstance.hideFlags = HideFlags.HideAndDontSave;
+            state.SpawnedInstance.transform.localScale = Vector3.Scale(_vfxPrefab.transform.localScale, Scale);
 
-            _spawnedInstance.name = _vfxPrefab.name;
-            _spawnedInstance.hideFlags = HideFlags.HideAndDontSave;
-            _spawnedInstance.transform.localScale = Vector3.Scale(_vfxPrefab.transform.localScale, Scale);
-
-            // 3. 初始化粒子系统为初始状态（暂停待步进，应用时间缩放）
-            _cachedParticleSystems = _spawnedInstance.GetComponentsInChildren<ParticleSystem>(true);
+            // 3. 初始化粒子
+            state.CachedParticleSystems = state.SpawnedInstance.GetComponentsInChildren<ParticleSystem>(true);
             float speedScale = GetStretchSpeedMultiplier();
             float simRate = speedScale * (_playbackRateSynced ? Mathf.Max(0.001f, context.PlaybackRate) : 1.0f);
 
-            for (int i = 0; i < _cachedParticleSystems.Length; i++)
+            for (int i = 0; i < state.CachedParticleSystems.Length; i++)
             {
-                var ps = _cachedParticleSystems[i];
-                var main = ps.main;
-                main.simulationSpeed = simRate;
-                ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
-                ps.Clear(true);
-                ps.Play(true);
+                var ps = state.CachedParticleSystems[i];
+                if (ps != null)
+                {
+                    var main = ps.main;
+                    main.simulationSpeed = simRate;
+                    ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                    ps.Clear(true);
+                    ps.Play(true);
+                }
             }
         }
 
         public override void OnPreviewUpdate(in MontageActionContext context, float deltaTime)
         {
-            if (_spawnedInstance == null)
-            {
-                return;
-            }
+            var state = GetEditorPreviewState();
+            if (state == null || state.SpawnedInstance == null) return;
 
-            // 1. 动态位置追踪与更新
-            UpdateSpatialTransform(_spawnedInstance, in context);
+            UpdateSpatialTransform(state.SpawnedInstance, in context, state);
 
-            if (_cachedParticleSystems == null || _cachedParticleSystems.Length == 0)
-            {
-                return;
-            }
+            if (state.CachedParticleSystems == null || state.CachedParticleSystems.Length == 0) return;
 
-            // 2. 同步模拟速率
             float speedScale = GetStretchSpeedMultiplier();
             float simRate = speedScale * (_playbackRateSynced ? Mathf.Max(0.001f, context.PlaybackRate) : 1.0f);
-            for (int i = 0; i < _cachedParticleSystems.Length; i++)
+
+            for (int i = 0; i < state.CachedParticleSystems.Length; i++)
             {
-                var ps = _cachedParticleSystems[i];
+                var ps = state.CachedParticleSystems[i];
                 if (ps != null)
                 {
                     var main = ps.main;
@@ -281,13 +293,12 @@ namespace Cwcbb.Tools.CwcMontage
                 }
             }
 
-            // 3. 编辑器非运行模式下，手动驱动粒子自适应仿真
             float effectiveStep = deltaTime * speedScale * (_playbackRateSynced ? context.PlaybackRate : 1.0f);
             if (effectiveStep > 0.0001f)
             {
-                for (int i = 0; i < _cachedParticleSystems.Length; i++)
+                for (int i = 0; i < state.CachedParticleSystems.Length; i++)
                 {
-                    var ps = _cachedParticleSystems[i];
+                    var ps = state.CachedParticleSystems[i];
                     if (ps != null)
                     {
                         ps.Simulate(effectiveStep, true, false);
@@ -298,13 +309,14 @@ namespace Cwcbb.Tools.CwcMontage
 
         public override void OnPreviewExit(in MontageActionContext context)
         {
-            if (_spawnedInstance != null)
+            var state = GetEditorPreviewState();
+            if (state != null && state.SpawnedInstance != null)
             {
-                if (_cachedParticleSystems != null)
+                if (state.CachedParticleSystems != null)
                 {
-                    for (int i = 0; i < _cachedParticleSystems.Length; i++)
+                    for (int i = 0; i < state.CachedParticleSystems.Length; i++)
                     {
-                        var ps = _cachedParticleSystems[i];
+                        var ps = state.CachedParticleSystems[i];
                         if (ps != null)
                         {
                             ps.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
@@ -313,32 +325,28 @@ namespace Cwcbb.Tools.CwcMontage
                     }
                 }
 
-                UnityEngine.Object.DestroyImmediate(_spawnedInstance);
-                _spawnedInstance = null;
+                UnityEngine.Object.DestroyImmediate(state.SpawnedInstance);
+                state.SpawnedInstance = null;
+                state.CachedParticleSystems = null;
             }
 
-            _cachedParticleSystems = null;
             base.OnPreviewExit(context);
         }
 
-        /// <summary>
-        /// 将粒子系统精准模拟到指定的时间点（编辑器非播放态 Scrub / Seek / 定格专用）。
-        /// </summary>
-        /// <param name="targetLocalTime">目标时间点（秒）</param>
         public void SimulateToTime(float targetLocalTime)
         {
-            if (_cachedParticleSystems == null || _cachedParticleSystems.Length == 0)
+            var state = GetEditorPreviewState();
+            if (state == null || state.CachedParticleSystems == null || state.CachedParticleSystems.Length == 0)
             {
                 return;
             }
 
             targetLocalTime = Mathf.Max(0f, targetLocalTime);
-            for (int i = 0; i < _cachedParticleSystems.Length; i++)
+            for (int i = 0; i < state.CachedParticleSystems.Length; i++)
             {
-                var ps = _cachedParticleSystems[i];
+                var ps = state.CachedParticleSystems[i];
                 if (ps != null)
                 {
-                    // restart = true: 从0重新模拟到 targetLocalTime，实现任意时刻绝对一致的确定性粒子切片
                     ps.Simulate(targetLocalTime, true, true, true);
                 }
             }
@@ -346,37 +354,28 @@ namespace Cwcbb.Tools.CwcMontage
 
         public override void OnPreviewScrub(in MontageActionContext context, float localTime)
         {
-            if (_spawnedInstance == null)
-            {
-                return;
-            }
+            var state = GetEditorPreviewState();
+            if (state == null || state.SpawnedInstance == null) return;
 
-            // 1. 同步空间位置
-            UpdateSpatialTransform(_spawnedInstance, in context);
+            UpdateSpatialTransform(state.SpawnedInstance, in context, state);
 
-            // 2. 将动作块内部局部时间归一化到 [0, 1] 进度，再精确线性映射到用户截取的有效区间 [ClipStartTime, ClipEndTime]
             float blockDur = Mathf.Max(0.0001f, BlockDuration);
             float progress = Mathf.Clamp01(localTime / blockDur);
             float targetTime = ClipStartTime + progress * EffectiveClipDuration;
 
-            // 3. 绝对时间精确模拟粒子切片
             SimulateToTime(targetTime);
         }
 
         public override void OnPreviewParametersChanged(in MontageActionContext context)
         {
-            if (_spawnedInstance == null)
-            {
-                return;
-            }
+            var state = GetEditorPreviewState();
+            if (state == null || state.SpawnedInstance == null) return;
 
-            // 1. 原地更新空间变换与挂点骨骼，绝对不重新销毁或清空粒子
-            UpdatePreviewTransform(_spawnedInstance, in context);
+            UpdatePreviewTransform(state.SpawnedInstance, in context);
 
-            // 2. 同步局部缩放倍率
             if (_vfxPrefab != null)
             {
-                _spawnedInstance.transform.localScale = Vector3.Scale(_vfxPrefab.transform.localScale, Scale);
+                state.SpawnedInstance.transform.localScale = Vector3.Scale(_vfxPrefab.transform.localScale, Scale);
             }
         }
 
@@ -396,14 +395,11 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
 
-        #region 时长分析与时间拉伸辅助计算
+        #region 公共方法与辅助计算
 
-        /// <summary>
-        /// 获取特效预制件中所有子粒子系统完整消散完毕的最大自然时长（秒）。
-        /// </summary>
         public float GetNaturalDuration()
         {
-            if (_cachedNaturalDuration > 0.001f)
+            if (_cachedNaturalDuration > 0.01f)
             {
                 return _cachedNaturalDuration;
             }
@@ -417,19 +413,11 @@ namespace Cwcbb.Tools.CwcMontage
             return _cachedNaturalDuration;
         }
 
-        /// <summary>
-        /// 获取基于截取有效区间与当前动作块时长计算出的时间拉伸速率倍率（EffectiveClipDuration / BlockDuration）。
-        /// 兼容保留此方法，内部直接调用基类统一契约属性 SpeedMultiplier。
-        /// </summary>
         public float GetStretchSpeedMultiplier()
         {
             return SpeedMultiplier;
         }
 
-        /// <summary>
-        /// 递归深度扫描预制件层级下所有 ParticleSystem，计算从首颗粒子发射到最后一颗残余粒子彻底消散完毕的最大绝对耗时。
-        /// 耗时 = startDelay + duration + startLifetime
-        /// </summary>
         public static float CalculatePrefabTotalDuration(GameObject prefab)
         {
             if (prefab == null) return 1.0f;
@@ -465,7 +453,6 @@ namespace Cwcbb.Tools.CwcMontage
                 }
             }
 
-            // 优先使用非循环粒子的完整消散总时长；若整个预制体全部为循环粒子，则使用单圈循环周期
             float result = maxNonLooping > 0.001f ? maxNonLooping : maxLooping;
             return Mathf.Max(0.01f, result);
         }

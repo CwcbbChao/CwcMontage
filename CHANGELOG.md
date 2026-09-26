@@ -5,6 +5,20 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-09-26
+
+### Added
+- **0-GC Runtime State Separation (0-GC 运行时状态解耦架构)**: Introduced `IMontageBlockState` and `MontageSpatialBlockState`, completely separating transient runtime mutable data from action block assets.
+- **Anti-Boxing Generic Base Classes (强类型防装箱泛型基类)**: Added `MontageActionBlockBase<TState>` and `MontageSpatialActionBlockBase<TState>` with `where TState : class, IMontageBlockState, new()`, ensuring 100% immutable asset singletons and type-safe 0-GC dispatch.
+- **Typed Block State Pool (类型化状态对象池)**: Implemented `MontageBlockStatePool` with per-`Type` stack caching, eliminating type thrashing GC allocations when characters alternate between different skill montages.
+- **Baked Immutable Action Blocks (只读烘焙运行时列表)**: Added `MontageSequenceSO.BakedRuntimeActionBlocks` to cache sorted, active blocks from non-muted tracks, completely eliminating `blockData.Clone()` and `action.Clone()`.
+- **Per-Coordinator Micro Player Pool (角色级微型播放器池)**: `MontageCoordinator` now maintains an on-demand micro player pool (capacity 2~3) per character with in-place reuse, eliminating per-play `MontagePlayer` allocations.
+
+### Changed
+- **Interruption Lifetime Protection**: Refactored `MontageCoordinator.CheckAndReleaseSlot` so players are only recycled after layer slot weights smoothly decay to 0 and all channel references are cleared, preserving C0/C1 dynamic continuity and preventing bind pose snaps upon interruption.
+- **Auditing Built-in Blocks**: Refactored `VFXActionBlock`, `AudioActionBlock`, and `PrefabSpawnActionBlock` to inherit from generic bases and encapsulate runtime instances into reusable inner states (`VFXState`, `AudioState`, `PrefabSpawnState`).
+- **Penetration Sweep Safeguard**: Preserved strict paired `OnEnter` -> `OnExit` execution for single-frame block penetration during frame drops in `MontagePlayer.SweepInterval`.
+
 ## [1.1.0] - 2026-09-25
 
 ### Added

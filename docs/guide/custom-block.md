@@ -2,102 +2,158 @@
 
 `CwcMontage` 遵循面向对象的开闭原则（Open-Closed Principle）：核心播放内核完全不需要了解具体的业务表现细节。所有的音效、粒子、相机震屏、受击盒激活均作为独立的 **ActionBlock** 实现。
 
-你可以零侵入核心源码，派生创建符合你项目专属需求的动作块。
+系统采用 **0-GC 纯只读配置与运行时状态外置架构**：资产类只保存静态只读配置，所有运行时的临时变量由专用的 State 类持有，由内核通过类型对象池自动复用，做到单次播放绝对 0-GC 且支持任意多角色并发播放。
 
 ---
 
-## ActionBlock 生命周期机制
+## 核心基类与架构选型
 
-每个动作块继承自 `MontageActionBlockBase`，其运行时生命周期受到内核**区间扫掠采样器**的严格保证：
+在扩展动作块时，根据表现类型选择继承的泛型基类：
 
-```
-时间推进 ---> [进入 Block] --------------> [区间内推进] --------------> [离开 Block]
-                OnEnter()                   OnUpdate()                   OnExit()
-```
-
-- **`OnEnter(in MontageActionContext context)`**：播放时间进入该 Block 的有效区间时触发（保证当次播放只触发一次）。
-- **`OnUpdate(in MontageActionContext context)`**：在 Block 时间范围内随帧更新推进。
-- **`OnExit(in MontageActionContext context)`**：播放时间离开 Block 区间，或者蒙太奇被外部强行打断/提前终止时触发（执行关键清理，防泄漏）。
-- **`OnSample(in MontageActionContext context)`**：在编辑器时间轴 Scrubbing 洗牌时执行的无副作用预览采样。
+| 动作块基类 | 状态约束 | 适用场景 |
+| :--- | :--- | :--- |
+| `MontageActionBlockBase<TState>` | `where TState : class, IMontageBlockState, new()` | 纯逻辑表现（相机震屏、顿帧、音效、材质变色、后处理等） |
+| `MontageSpatialActionBlockBase<TState>` | `where TState : MontageSpatialBlockState, new()` | 空间位置型表现（特效粒子、生成预制体模型、武器残影等） |
 
 ---
 
-## 上下文参数 (MontageActionContext)
+## 1. 运行时状态接口 (IMontageBlockState)
 
-生命周期函数均接收一个只读结构体 `MontageActionContext`：
-- `context.TargetObject`：执行蒙太奇的宿主 GameObject（即挂载了 `MontageCoordinator` 的角色）。
-- `context.CurrentTime`：当前蒙太奇推进到的局部时间戳（秒）。
-- `context.NormalizedProgress`：当前 Block 内部的归一化完成度 `[0.0, 1.0]`。
-- `context.IsScrubbing`：布尔值，标识当前是处于编辑器拖拽预览模式还是运行时真实播放。
-
----
-
-## 实战示例：实现一个相机震屏动作块 (CameraShakeBlock)
+每个动作块的可变状态必须实现 `IMontageBlockState` 接口：
 
 ```csharp
+namespace Cwcbb.Tools.CwcMontage
+{
+    public interface IMontageBlockState
+    {
+        /// <summary>
+        /// 当离开动作块区间、动画被打断或回池时调用，将所有可变变量重置归零。
+        /// </summary>
+        void Reset();
+    }
+}
+```
+
+内核对象池 `MontageBlockStatePool` 会在动作块离开区间或动画结束时自动调用 `Reset()`，并将该状态实例安全保存在专属栈中，供下次播放复用。
+
+---
+
+## 2. 实战示例：实现相机震屏动作块 (CameraShakeBlock)
+
+```csharp
+using System;
 using UnityEngine;
 using Cwcbb.Tools.CwcMontage;
 
-// 配置编辑器特性外观
+// 1. 定义运行时状态类（随槽位对象池常驻复用，杜绝装箱拆箱）
+public class CameraShakeState : IMontageBlockState
+{
+    public float ElapsedTime;
+
+    public void Reset()
+    {
+        ElapsedTime = 0f;
+    }
+}
+
+// 2. 继承强类型泛型基类（动作块自身保持 100% 只读配置单例）
+[Serializable]
 [MontageCategory("Visual")]
 [MontageColor("#9b59b6")]
 [MontageDisplayName("Camera Shake")]
-public class CameraShakeBlock : MontageActionBlockBase
+public class CameraShakeBlock : MontageActionBlockBase<CameraShakeState>
 {
+    #region Inspector 只读配置
+
     [SerializeField] private float _intensity = 0.5f;
     [SerializeField] private float _frequency = 25.0f;
 
-    public override void OnEnter(in MontageActionContext context)
+    #endregion
+
+    #region 强类型生命周期
+
+    protected override void OnEnter(in MontageActionContext context, CameraShakeState state)
     {
-        base.OnEnter(context);
-        
-        // 运行时触发你的相机系统震动（例如 Cinemachine Impulse）
-        if (!context.IsScrubbing)
+        state.ElapsedTime = 0f;
+        // 触发相机系统初始震冲（例如 Cinemachine Impulse）
+    }
+
+    protected override void OnUpdate(in MontageActionContext context, CameraShakeState state, float deltaTime)
+    {
+        state.ElapsedTime += deltaTime;
+        // 随帧采样震动衰减...
+    }
+
+    protected override void OnExit(in MontageActionContext context, CameraShakeState state)
+    {
+        // 离开区间或被强行打断时平滑重置相机
+    }
+
+    #endregion
+}
+```
+
+---
+
+## 3. 空间型动作块 (MontageSpatialActionBlockBase)
+
+如果表现需要跟随人形骨骼挂点（如左手、武器、胸口）或在触发时保持世界坐标固定：
+继承 `MontageSpatialActionBlockBase<TState>`，且状态继承自 `MontageSpatialBlockState`，系统会自动处理目标骨骼解析与世界坐标跟随矩阵换算，且杜绝挂载为子节点造成的角色非等比缩放畸变。
+
+```csharp
+using System;
+using UnityEngine;
+using Cwcbb.Tools.CwcMontage;
+
+public class SparkEffectBlock : MontageSpatialActionBlockBase<SparkEffectBlock.SparkState>
+{
+    public class SparkState : MontageSpatialBlockState
+    {
+        public GameObject SpawnedInstance;
+
+        public override void Reset()
         {
-            // CinemachineImpulseSource.GenerateImpulse(_intensity);
-            Debug.Log($"[CameraShakeBlock] 触发相机震动，强度: {_intensity}");
+            base.Reset();
+            SpawnedInstance = null;
         }
     }
 
-    public override void OnExit(in MontageActionContext context)
+    [SerializeField] private GameObject _sparkPrefab;
+
+    protected override void OnEnter(in MontageActionContext context, SparkState state)
     {
-        base.OnExit(context);
-        // 清理或平滑停止震动
+        if (_sparkPrefab == null) return;
+
+        // 1. 基类无 GC 解析骨骼与世界坐标换算（结果存入 state）
+        ResolveTargetBone(context, state);
+        CalculateWorldTransform(state, out Vector3 worldPos, out Quaternion worldRot);
+        Transform attachParent = GetSpawnParent(context, isPreview: false);
+
+        // 2. 从内置对象池生成实例并暂存至 state
+        state.SpawnedInstance = MontageObjectPool.Spawn(_sparkPrefab, worldPos, worldRot, attachParent);
+    }
+
+    protected override void OnUpdate(in MontageActionContext context, SparkState state, float deltaTime)
+    {
+        // 外部动态跟随骨骼或按配置保持世界原地不动
+        UpdateSpatialTransform(state.SpawnedInstance, in context, state);
+    }
+
+    protected override void OnExit(in MontageActionContext context, SparkState state)
+    {
+        if (state.SpawnedInstance != null)
+        {
+            MontageObjectPool.Recycle(state.SpawnedInstance);
+            state.SpawnedInstance = null;
+        }
     }
 }
 ```
 
 ---
 
-## 空间型动作块 (MontageSpatialActionBlockBase)
+## 4. 编辑器时间轴视口透明兼容
 
-如果你的表现需要绑定角色的特定骨骼（如右手武器插槽、左脚足底发射粒子）：
-继承 `MontageSpatialActionBlockBase` 即可天然获得骨骼挂点识别与相对位姿计算：
-
-```csharp
-using UnityEngine;
-using Cwcbb.Tools.CwcMontage;
-
-[MontageCategory("Combat")]
-[MontageColor("#e67e22")]
-[MontageDisplayName("Spawn Weapon Spark")]
-public class WeaponSparkBlock : MontageSpatialActionBlockBase
-{
-    [SerializeField] private GameObject _sparkPrefab;
-
-    public override void OnEnter(in MontageActionContext context)
-    {
-        base.OnEnter(context);
-
-        // GetSocketTransform 自动根据你在 Inspector 配置的 SocketName/HumanoidBone 寻找对应挂点
-        Transform socketTransform = GetSocketTransform(context.TargetObject);
-        if (socketTransform != null && _sparkPrefab != null)
-        {
-            GameObject spark = Object.Instantiate(_sparkPrefab, socketTransform.position, socketTransform.rotation);
-            Object.Destroy(spark, 1.0f);
-        }
-    }
-}
-```
-
-编写完毕后，回到 Unity 编辑器中打开 Montage Editor，在添加 Track 的下拉列表中即可立即看到你自定义的分类与动作块！
+使用泛型基类 `MontageActionBlockBase<TState>` 编写的自定义动作块，在 Unity 编辑器中打开 Montage Editor 时间轴时：
+- 右键点击轨道直接自动识别并列入新建菜单；
+- 基类已自动内置编辑器视口专用预览状态，时间轴拖拽与播放头 Scrubbing 即刻生效，无需任何额外的编辑器适配代码。

@@ -23,6 +23,9 @@ features:
   - icon: ⚡
     title: 表现层与战斗逻辑解耦
     details: 核心系统专注于动画采样与视听打点，由外部状态机或技能系统驱动动作流转与判定，架构职责清晰。
+  - icon: 🛡️
+    title: 0-GC 纯只读配置与状态外置
+    details: 彻底消除 blockData.Clone()，运行时临时数据交由 IMontageBlockState 与类型对象池复用，支持多角色高并发安全播放。
   - icon: 🎯
     title: 半开区间扫掠防漏帧
     details: 采用 (LastTime, CurrentTime] 区间判定，低帧率或卡顿跨越事件块时保证 OnEnter 与 OnExit 严格成对触发，杜绝特效残留。

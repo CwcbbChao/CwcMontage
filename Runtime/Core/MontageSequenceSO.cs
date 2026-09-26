@@ -413,19 +413,56 @@ namespace Cwcbb.Tools.CwcMontage
         /// </summary>
         public List<MontageTrackData> Tracks => _tracks;
 
+        /// <summary>
+        /// 烘焙扁平化的运行时动作块只读列表。
+        /// 过滤掉所有静音轨道与禁用块，按起始时间排序，终身常驻内存，
+        /// 供所有 MontagePlayer 实例直接只读读取，彻底消灭运行时 Clone 与 GC 堆分配。
+        /// </summary>
+        public IReadOnlyList<MontageActionBlockData> BakedRuntimeActionBlocks
+        {
+            get
+            {
+                if (_bakedRuntimeActionBlocks == null)
+                {
+                    BakeRuntimeActionBlocks();
+                }
+                return _bakedRuntimeActionBlocks;
+            }
+        }
+
+        #endregion
+
+        #region 私有非序列化字段 (运行时烘焙缓存)
+
+        [NonSerialized] private List<MontageActionBlockData> _bakedRuntimeActionBlocks;
+
         #endregion
 
         #region Unity 生命周期
+
+        private void OnEnable()
+        {
+            InvalidateBakedBlocks();
+        }
 
         private void OnValidate()
         {
             EnsureSegmentsValid();
             ValidateActionBlocks();
+            InvalidateBakedBlocks();
         }
 
         #endregion
 
         #region 公共方法 (分段与物理时间计算)
+
+        /// <summary>
+        /// 使缓存的扁平运行时动作块列表失效并在下次访问时重新烘焙。
+        /// </summary>
+        public void InvalidateBakedBlocks()
+        {
+            _bakedRuntimeActionBlocks = null;
+        }
 
         /// <summary>
         /// 校验并修正所有轨道上的动作块，强制保证其起止帧与时长合法（至少 1 帧）。
@@ -445,6 +482,39 @@ namespace Cwcbb.Tools.CwcMontage
                     track.ActionBlocks[j]?.EnsureValid(fps);
                 }
             }
+        }
+
+        private void BakeRuntimeActionBlocks()
+        {
+            if (_bakedRuntimeActionBlocks == null)
+            {
+                _bakedRuntimeActionBlocks = new List<MontageActionBlockData>(16);
+            }
+            else
+            {
+                _bakedRuntimeActionBlocks.Clear();
+            }
+
+            if (_tracks == null) return;
+
+            float fps = FrameRate;
+            for (int i = 0; i < _tracks.Count; i++)
+            {
+                var track = _tracks[i];
+                if (track == null || track.IsMuted || track.ActionBlocks == null) continue;
+
+                for (int j = 0; j < track.ActionBlocks.Count; j++)
+                {
+                    var blockData = track.ActionBlocks[j];
+                    if (blockData != null && blockData.IsEnabled && blockData.Action != null)
+                    {
+                        blockData.EnsureValid(fps);
+                        _bakedRuntimeActionBlocks.Add(blockData);
+                    }
+                }
+            }
+
+            _bakedRuntimeActionBlocks.Sort((a, b) => a.StartTime.CompareTo(b.StartTime));
         }
 
         /// <summary>

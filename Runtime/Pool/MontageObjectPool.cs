@@ -23,6 +23,8 @@ namespace Cwcbb.Tools.CwcMontage
         private static readonly Dictionary<int, int> _instanceToPrefabMap = new(128);
         private static readonly Dictionary<int, Vector3> _prefabInitialScaleMap = new(32);
         private static readonly Queue<AudioSource> _audioSourcePool = new(16);
+        private static readonly List<IMontagePoolable> _tempPoolables = new(8);
+        private static readonly List<ParticleSystem> _tempParticleSystems = new(16);
 
         #endregion
 
@@ -121,12 +123,14 @@ namespace Cwcbb.Tools.CwcMontage
             // 应用准确缩放
             instance.transform.localScale = initialScale * Mathf.Max(0.0001f, scaleMultiplier);
 
-            // 触发可能挂载的 IMontagePoolable 接口
-            var poolables = instance.GetComponentsInChildren<IMontagePoolable>(true);
-            for (int i = 0; i < poolables.Length; i++)
+            // 触发可能挂载的 IMontagePoolable 接口（零 GC 分配）
+            _tempPoolables.Clear();
+            instance.GetComponentsInChildren(true, _tempPoolables);
+            for (int i = 0; i < _tempPoolables.Count; i++)
             {
-                poolables[i].OnSpawnFromMontagePool();
+                _tempPoolables[i].OnSpawnFromMontagePool();
             }
+            _tempPoolables.Clear();
 
             return instance;
         }
@@ -142,20 +146,24 @@ namespace Cwcbb.Tools.CwcMontage
                 return;
             }
 
-            // 触发 IMontagePoolable 接口
-            var poolables = instance.GetComponentsInChildren<IMontagePoolable>(true);
-            for (int i = 0; i < poolables.Length; i++)
+            // 触发 IMontagePoolable 接口（零 GC 分配）
+            _tempPoolables.Clear();
+            instance.GetComponentsInChildren(true, _tempPoolables);
+            for (int i = 0; i < _tempPoolables.Count; i++)
             {
-                poolables[i].OnRecycleToMontagePool();
+                _tempPoolables[i].OnRecycleToMontagePool();
             }
+            _tempPoolables.Clear();
 
-            // 粒子系统重置
-            var particleSystems = instance.GetComponentsInChildren<ParticleSystem>(true);
-            for (int i = 0; i < particleSystems.Length; i++)
+            // 粒子系统重置（零 GC 分配）
+            _tempParticleSystems.Clear();
+            instance.GetComponentsInChildren(true, _tempParticleSystems);
+            for (int i = 0; i < _tempParticleSystems.Count; i++)
             {
-                particleSystems[i].Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
-                particleSystems[i].Clear(true);
+                _tempParticleSystems[i].Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+                _tempParticleSystems[i].Clear(true);
             }
+            _tempParticleSystems.Clear();
 
             int instanceId = instance.GetInstanceID();
 
@@ -338,6 +346,8 @@ namespace Cwcbb.Tools.CwcMontage
             _instanceToPrefabMap.Clear();
             _prefabInitialScaleMap.Clear();
             _audioSourcePool.Clear();
+            _tempPoolables.Clear();
+            _tempParticleSystems.Clear();
         }
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]

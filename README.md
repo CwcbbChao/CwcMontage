@@ -51,16 +51,22 @@
    - 支持外部进度驱动（`handle.EvaluateSectionProgress`），便于实现按键蓄力与连招取消。
 5. **半开区间扫掠，事件严格成对触发**
    - 采用 `(LastTime, CurrentTime]` 半开区间判定，低帧率或卡顿跨越整个事件块时自动按序触发 `OnEnter` 与 `OnExit`，彻底杜绝特效或音效常驻残留。
-6. **预分配双插槽 (Double-Buffered Slots) 平滑过渡**
+6. **0-GC 纯只读配置与状态外置架构 (Immutable & State Decoupled)**
+   - 彻底消灭运行时 `blockData.Clone()` 与堆内存分配，动作块资产变为 100% 不可变只读配置，支持任意多角色高并发安全复用。
+   - 运行时临时数据全部移入 `IMontageBlockState`，通过泛型基类 `MontageActionBlockBase<TState>` 提供强类型防装箱契约，核心调度对具体表现完全无感知（OCP）。
+7. **类型化状态池与角色微型 Player 池 (Typed & Per-Coordinator Pool)**
+   - 内置 `MontageBlockStatePool`，以 `Type` 为单元栈式隔离复用状态实例，彻底根除角色在不同技能交替释放时的类型抖动 GC 堆分配。
+   - 角色级维护容量为 2~3 的微型 `MontagePlayer` 池，原地启动复用；严格保证在多通道姿态完全淡出衰减归零后才回池，杜绝打断姿态突变硬切。
+8. **预分配双插槽 (Double-Buffered Slots) 平滑过渡**
    - 每个图层预分配两个 Slot 处理 CrossFade，运行时无需频繁增删 Playable 节点，消除拓扑重建卡顿且保证 0 GC 分配。
-7. **轻量代际安全句柄 (MontageHandle)**
+9. **轻量代际安全句柄 (MontageHandle)**
    - 16 字节值类型（`readonly struct`），纯栈分配，0 GC 开销。
    - 封装代际版本号（Generation ID），动画结束或槽位复用后旧句柄自动失效，杜绝野指针与串号误操作。
-8. **Root Motion 委托派发**
-   - 支持水平、垂直与旋转分量独立过滤，将位移增量分发给 `CharacterController` 等物理组件，不直接修改 Transform，避免穿墙或物理失效。
-9. **现代 UI Toolkit 可视化时间轴编辑器**
-   - 支持多轨道拖拽、动画片段调速（Time Stretch）与修剪（Trim）、多级磁吸对齐（吸附 0 点/播放头/分段点/邻近块）、跨资产复制粘贴。
-   - 内置基于 `PreviewRenderUtility` 的独立 3D 视口，时间轴拖拽时粒子系统支持绝对时间切片预览（`ps.Simulate`）。
+10. **Root Motion 委托派发**
+    - 支持水平、垂直与旋转分量独立过滤，将位移增量分发给 `CharacterController` 等物理组件，不直接修改 Transform，避免穿墙或物理失效。
+11. **现代 UI Toolkit 可视化时间轴编辑器**
+    - 支持多轨道拖拽、动画片段调速（Time Stretch）与修剪（Trim）、多级磁吸对齐（吸附 0 点/播放头/分段点/邻近块）、跨资产复制粘贴。
+    - 内置基于 `PreviewRenderUtility` 的独立 3D 视口，时间轴拖拽时粒子系统支持绝对时间切片预览（`ps.Simulate`）。
 
 ---
 

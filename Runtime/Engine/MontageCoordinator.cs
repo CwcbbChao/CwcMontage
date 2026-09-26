@@ -146,6 +146,8 @@ namespace Cwcbb.Tools.CwcMontage
         private readonly List<LayerRuntimeState> _layerStates = new(3);
         private readonly Transform[] _cachedBones = new Transform[MontageBoneUtility.BONE_COUNT];
         private readonly HashSet<MontagePlayer> _tickablePlayers = new(4);
+        private readonly List<MontagePlayer> _playerPool = new(3);
+        private readonly List<MontagePlayer> _activePlayers = new(3);
         private IMontageRootMotionReceiver _cachedReceiver;
 
         private bool _isGraphInitialized;
@@ -283,6 +285,13 @@ namespace Cwcbb.Tools.CwcMontage
                 }
             }
 
+            for (int i = 0; i < _playerPool.Count; i++)
+            {
+                _playerPool[i]?.Reset();
+            }
+            _playerPool.Clear();
+            _activePlayers.Clear();
+
             CleanupPlayableGraph();
 
             // 还原 Animator 的 RuntimeAnimatorController
@@ -323,17 +332,16 @@ namespace Cwcbb.Tools.CwcMontage
 
             float blendInDuration = customBlendInTime ?? montage.DefaultBlendInTime;
 
-            // 1. 实例化单一权威时钟源播放器
-            var player = new MontagePlayer(
-                montage,
-                gameObject,
-                _animator,
-                blendInDuration,
-                customBlendInCurve,
-                isPreview: false,
-                coordinator: this);
+            // 1. 从微型 Player 池获取闲置播放器并原地复用（0 GC Alloc）
+            var player = GetOrCreatePlayer();
+            player.Play(montage, customBlendInTime, customBlendInCurve);
+            if (!_activePlayers.Contains(player))
+            {
+                _activePlayers.Add(player);
+            }
 
-            // 注册生命周期回调（单个 Player 实例仅注册一次）
+            // 注册生命周期回调（先解绑保底，杜绝重复注册）
+            UnbindPlayerEvents(player);
             player.OnSectionEntered += HandleSectionEntered;
             player.OnFinished += HandlePlayerEnded;
             player.OnInterrupted += HandlePlayerEnded;
@@ -949,7 +957,48 @@ namespace Cwcbb.Tools.CwcMontage
                 slot.DestroyPlayables(_playableGraph, mixer);
                 UnbindPlayerEvents(player);
                 slot.Reset();
+
+                if (!IsPlayerOccupiedByAnySlot(player))
+                {
+                    ReleasePlayer(player);
+                }
             }
+        }
+
+        private bool IsPlayerOccupiedByAnySlot(MontagePlayer player)
+        {
+            for (int i = 0; i < _layerStates.Count; i++)
+            {
+                var layer = _layerStates[i];
+                if (layer.Slot0.Player == player || layer.Slot1.Player == player)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private MontagePlayer GetOrCreatePlayer()
+        {
+            for (int i = 0; i < _playerPool.Count; i++)
+            {
+                var candidate = _playerPool[i];
+                if (!_activePlayers.Contains(candidate))
+                {
+                    return candidate;
+                }
+            }
+
+            var newPlayer = new MontagePlayer(gameObject, _animator, isPreview: false, coordinator: this);
+            _playerPool.Add(newPlayer);
+            return newPlayer;
+        }
+
+        private void ReleasePlayer(MontagePlayer player)
+        {
+            if (player == null) return;
+            _activePlayers.Remove(player);
+            player.Reset();
         }
 
         private void ApplyUpperBodySpineDecoupling()

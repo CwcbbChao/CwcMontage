@@ -33,15 +33,16 @@ namespace Cwcbb.Tools.CwcMontage
     {
         #region 私有字段
 
-        private readonly MontageSequenceSO _sourceAsset;
+        private MontageSequenceSO _sourceAsset;
         private readonly GameObject _targetObject;
         private readonly Animator _targetAnimator;
         private readonly MontageCoordinator _coordinator;
         private readonly bool _isPreview;
 
-        private readonly List<MontageActionBlockData> _runtimeBlocks = new(16);
-        private readonly HashSet<MontageActionBlockData> _activeBlocks = new();
-        private readonly List<MontageActionBlockData> _tempSweepList = new(16);
+        private IMontageBlockState[] _states = new IMontageBlockState[8];
+        private readonly HashSet<int> _activeBlockIndices = new(8);
+        private int _configuredBlockCount;
+
         private readonly Dictionary<int, float> _sectionRates = new();
 
         private MontagePlayerState _state = MontagePlayerState.Playing;
@@ -220,6 +221,25 @@ namespace Cwcbb.Tools.CwcMontage
 
         #region 构造方法
 
+        /// <summary>
+        /// 轻量化初始化常驻播放器实例（0 堆内存开销，供微型池常驻复用）。
+        /// </summary>
+        public MontagePlayer(
+            GameObject targetObject,
+            Animator targetAnimator,
+            bool isPreview = false,
+            MontageCoordinator coordinator = null)
+        {
+            _targetObject = targetObject;
+            _targetAnimator = targetAnimator;
+            _isPreview = isPreview;
+            _coordinator = coordinator;
+            _state = MontagePlayerState.Finished;
+        }
+
+        /// <summary>
+        /// 向后兼容的构造方法（创建并立即原地启动播放）。
+        /// </summary>
         public MontagePlayer(
             MontageSequenceSO sourceAsset,
             GameObject targetObject,
@@ -228,19 +248,36 @@ namespace Cwcbb.Tools.CwcMontage
             AnimationCurve customBlendInCurve = null,
             bool isPreview = false,
             MontageCoordinator coordinator = null)
+            : this(targetObject, targetAnimator, isPreview, coordinator)
         {
-            if (sourceAsset == null)
+            if (sourceAsset != null)
             {
-                Debug.LogError("[MontagePlayer] 无法创建播放器实例：sourceAsset 为空。");
+                Play(sourceAsset, customBlendInTime, customBlendInCurve);
+            }
+        }
+
+        #endregion
+
+        #region 复用与原地启动 API
+
+        /// <summary>
+        /// 原地启动/重置播放指定的蒙太奇配置（0 GC Alloc）。
+        /// </summary>
+        public void Play(
+            MontageSequenceSO asset,
+            float? customBlendInTime = null,
+            AnimationCurve customBlendInCurve = null)
+        {
+            if (asset == null)
+            {
+                Debug.LogError("[MontagePlayer] 无法启动播放：asset 为空。");
                 return;
             }
 
-            _sourceAsset = sourceAsset;
-            _targetObject = targetObject;
-            _targetAnimator = targetAnimator;
-            _isPreview = isPreview;
-            _coordinator = coordinator;
+            // 1. 若先前还有活跃状态未归还，先完整安全重置归还
+            ResetStates();
 
+            _sourceAsset = asset;
             _state = MontagePlayerState.Playing;
             _isPaused = false;
 
@@ -258,29 +295,55 @@ namespace Cwcbb.Tools.CwcMontage
             _currentWeight = 0f;
             _weightAtStop = 1.0f;
             _currentSectionIndex = 0;
+            _sectionRates.Clear();
 
-            // 克隆所有非静音轨道上的动作块并进行合法性校验
-            _runtimeBlocks.Clear();
-            if (_sourceAsset.Tracks != null)
+            // 2. 获取烘焙好的扁平只读运行时 Block 列表（彻底消灭 Clone）
+            var blocks = _sourceAsset.BakedRuntimeActionBlocks;
+            int requiredBlocks = blocks != null ? blocks.Count : 0;
+            _configuredBlockCount = requiredBlocks;
+
+            // 3. 自适应扩容状态数组
+            if (requiredBlocks > _states.Length)
             {
-                float fps = _sourceAsset.FrameRate;
-                for (int i = 0; i < _sourceAsset.Tracks.Count; i++)
-                {
-                    var track = _sourceAsset.Tracks[i];
-                    if (track == null || track.IsMuted || track.ActionBlocks == null) continue;
+                int newCap = Mathf.Max(requiredBlocks, _states.Length * 2);
+                Array.Resize(ref _states, newCap);
+            }
 
-                    for (int j = 0; j < track.ActionBlocks.Count; j++)
-                    {
-                        var blockData = track.ActionBlocks[j];
-                        if (blockData != null && blockData.IsEnabled && blockData.Action != null)
-                        {
-                            var cloned = blockData.Clone();
-                            cloned.EnsureValid(fps);
-                            _runtimeBlocks.Add(cloned);
-                        }
-                    }
+            // 4. 从类型对象池获取状态实例（0-GC 终身复用，消除委托分配）
+            for (int i = 0; i < _configuredBlockCount; i++)
+            {
+                var action = blocks[i].Action;
+                if (action?.StateType != null)
+                {
+                    var state = MontageBlockStatePool.Get(action.StateType);
+                    _states[i] = state ?? action.CreateState();
+                }
+                else
+                {
+                    _states[i] = null;
                 }
             }
+        }
+
+        private void ResetStates()
+        {
+            if (_sourceAsset == null) return;
+            var blocks = _sourceAsset.BakedRuntimeActionBlocks;
+            var context = CreateCurrentContext();
+
+            ExitAllActiveBlocks(context);
+
+            for (int i = 0; i < _configuredBlockCount; i++)
+            {
+                if (_states[i] != null && blocks != null && i < blocks.Count && blocks[i].Action?.StateType != null)
+                {
+                    MontageBlockStatePool.Release(blocks[i].Action.StateType, _states[i]);
+                }
+                _states[i] = null;
+            }
+
+            _activeBlockIndices.Clear();
+            _configuredBlockCount = 0;
         }
 
         #endregion
@@ -408,14 +471,20 @@ namespace Cwcbb.Tools.CwcMontage
         /// <param name="effectiveDelta">当前帧有效时间步长</param>
         internal void SweepInterval(float fromTime, float toTime, float effectiveDelta)
         {
+            if (_sourceAsset == null) return;
+
+            var blocks = _sourceAsset.BakedRuntimeActionBlocks;
+            if (blocks == null) return;
+
             var context = CreateCurrentContext();
 
-            for (int i = 0; i < _runtimeBlocks.Count; i++)
+            for (int i = 0; i < _configuredBlockCount; i++)
             {
-                var blockData = _runtimeBlocks[i];
+                var blockData = blocks[i];
                 if (blockData == null || !blockData.IsEnabled || blockData.Action == null) continue;
 
                 var action = blockData.Action;
+                var state = _states[i];
                 float start = blockData.StartTime;
                 float end = blockData.EndTime;
 
@@ -424,26 +493,27 @@ namespace Cwcbb.Tools.CwcMontage
                 // 1. 当前处于 [start, end) 区间内
                 if (isInsideNow)
                 {
-                    if (!_activeBlocks.Contains(blockData))
+                    if (!_activeBlockIndices.Contains(i))
                     {
                         action.BlockDuration = blockData.Duration;
                         if (action.CanEnter(context))
                         {
-                            action.OnEnter(context);
-                            _activeBlocks.Add(blockData);
+                            action.OnEnter(context, state);
+                            _activeBlockIndices.Add(i);
                         }
                     }
                     else
                     {
                         action.BlockDuration = blockData.Duration;
-                        action.OnUpdate(context, effectiveDelta);
+                        action.OnUpdate(context, state, effectiveDelta);
                     }
                 }
-                // 2. 当前已离开区间，但之前已激活 -> 触发 OnExit
-                else if (_activeBlocks.Contains(blockData))
+                // 2. 当前已离开区间，但之前已激活 -> 触发 OnExit 并重置状态内部数据
+                else if (_activeBlockIndices.Contains(i))
                 {
-                    action.OnExit(context);
-                    _activeBlocks.Remove(blockData);
+                    action.OnExit(context, state);
+                    state?.Reset();
+                    _activeBlockIndices.Remove(i);
                 }
                 // 3. 穿透扫掠（单帧跨越整个块区间）：严格成对触发 OnEnter -> OnExit
                 else if (fromTime <= start && toTime >= end && fromTime < end)
@@ -451,8 +521,9 @@ namespace Cwcbb.Tools.CwcMontage
                     action.BlockDuration = blockData.Duration;
                     if (action.CanEnter(context))
                     {
-                        action.OnEnter(context);
-                        action.OnExit(context);
+                        action.OnEnter(context, state);
+                        action.OnExit(context, state);
+                        state?.Reset();
                     }
                 }
             }
@@ -628,26 +699,33 @@ namespace Cwcbb.Tools.CwcMontage
             var context = CreateCurrentContext();
 
             // 重新评估所有动作块集合状态
-            for (int i = 0; i < _runtimeBlocks.Count; i++)
+            if (_sourceAsset != null)
             {
-                var blockData = _runtimeBlocks[i];
-                if (blockData == null || !blockData.IsEnabled || blockData.Action == null) continue;
-
-                var action = blockData.Action;
-                bool isInside = _elapsedTime >= blockData.StartTime && _elapsedTime < blockData.EndTime;
-
-                if (isInside && !_activeBlocks.Contains(blockData))
+                var blocks = _sourceAsset.BakedRuntimeActionBlocks;
+                for (int i = 0; i < _configuredBlockCount; i++)
                 {
-                    if (action.CanEnter(context))
+                    var blockData = blocks[i];
+                    if (blockData == null || !blockData.IsEnabled || blockData.Action == null) continue;
+
+                    var action = blockData.Action;
+                    var state = _states[i];
+                    bool isInside = _elapsedTime >= blockData.StartTime && _elapsedTime < blockData.EndTime;
+
+                    if (isInside && !_activeBlockIndices.Contains(i))
                     {
-                        action.OnEnter(context);
-                        _activeBlocks.Add(blockData);
+                        action.BlockDuration = blockData.Duration;
+                        if (action.CanEnter(context))
+                        {
+                            action.OnEnter(context, state);
+                            _activeBlockIndices.Add(i);
+                        }
                     }
-                }
-                else if (!isInside && _activeBlocks.Contains(blockData))
-                {
-                    action.OnExit(context);
-                    _activeBlocks.Remove(blockData);
+                    else if (!isInside && _activeBlockIndices.Contains(i))
+                    {
+                        action.OnExit(context, state);
+                        state?.Reset();
+                        _activeBlockIndices.Remove(i);
+                    }
                 }
             }
         }
@@ -831,23 +909,46 @@ namespace Cwcbb.Tools.CwcMontage
             OnFinished?.Invoke(this);
         }
 
+        /// <summary>
+        /// 彻底终止播放并清理所有状态与已绑定的委托，将状态实例归还至对象池（供微型池回池复用）。
+        /// </summary>
+        public void Reset()
+        {
+            ResetStates();
+            _sourceAsset = null;
+            _state = MontagePlayerState.Finished;
+            _isPaused = false;
+            _elapsedTime = 0f;
+            _lastElapsedTime = -0.0001f;
+            _currentWeight = 0f;
+            _weightAtStop = 1.0f;
+            _customWeightMultiplier = 1.0f;
+            _sectionRates.Clear();
+
+            OnFinished = null;
+            OnInterrupted = null;
+            OnSectionEntered = null;
+        }
+
         private void ExitAllActiveBlocks(in MontageActionContext context)
         {
-            if (_activeBlocks.Count == 0) return;
+            if (_activeBlockIndices.Count == 0 || _sourceAsset == null) return;
 
-            _tempSweepList.Clear();
-            foreach (var block in _activeBlocks)
+            var blocks = _sourceAsset.BakedRuntimeActionBlocks;
+            if (blocks == null) return;
+
+            foreach (int index in _activeBlockIndices)
             {
-                _tempSweepList.Add(block);
+                if (index >= 0 && index < _configuredBlockCount && index < blocks.Count)
+                {
+                    var action = blocks[index].Action;
+                    var state = _states[index];
+                    action?.OnExit(context, state);
+                    state?.Reset();
+                }
             }
 
-            for (int i = 0; i < _tempSweepList.Count; i++)
-            {
-                _tempSweepList[i].Action?.OnExit(context);
-            }
-
-            _activeBlocks.Clear();
-            _tempSweepList.Clear();
+            _activeBlockIndices.Clear();
         }
 
         private MontageActionContext CreateCurrentContext()

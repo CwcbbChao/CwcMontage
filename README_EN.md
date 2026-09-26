@@ -51,16 +51,22 @@ Pre-allocated dual-slot crossfade transitions, dynamic section speed adjustments
    - Supports external progress driving (`handle.EvaluateSectionProgress`) for charging attacks and combo cancels.
 5. **Half-Open Interval Sweep (Guaranteed Paired Events)**
    - Evaluates active blocks using `(LastTime, CurrentTime]` intervals. Even across severe frame drops, `OnEnter` and `OnExit` execute in strict pairs to prevent lingering effects.
-6. **Pre-allocated Double-Buffered Slots (0 GC)**
+6. **0-GC Runtime State Separation (Immutable & Decoupled)**
+   - Completely eradicates runtime `blockData.Clone()` and heap allocations. Montage sequences become 100% immutable read-only asset singletons safe for arbitrary multi-character concurrency.
+   - All transient runtime data resides in `IMontageBlockState`, guarded by anti-boxing generic base classes (`MontageActionBlockBase<TState>`), keeping the dispatch core completely decoupled from specific components (OCP).
+7. **Typed Block State Pool & Per-Coordinator Micro Player Pool**
+   - Built-in `MontageBlockStatePool` caches states by `Type` stack, eradicating type-thrashing GC allocations when characters alternate between different skill actions.
+   - Character-level micro `MontagePlayer` pool (capacity 2~3) with in-place reuse; player recycling is strictly synchronized with multi-layer slot fade-out decay to prevent snap-to-bindpose artifacts.
+8. **Pre-allocated Double-Buffered Slots (0 GC)**
    - Each layer pre-allocates two alternating slots for smooth CrossFading, avoiding runtime graph restructuring, stalls, and heap allocations.
-7. **Generational Safety Handle (MontageHandle)**
+9. **Generational Safety Handle (MontageHandle)**
    - 16-byte readonly struct allocated on the stack (0 GC).
    - Encapsulates a Generation ID; expired or recycled slots invalidate old handles automatically, eliminating dangling references.
-8. **Safe Root Motion Delegation**
-   - Dispatches filtered horizontal, vertical, and rotational delta components via `IMontageRootMotionReceiver` or C# events to external movement controllers (e.g., CharacterController) without mutating Transform directly.
-9. **Modern UI Toolkit Timeline Editor**
-   - Multi-track timeline with clip time-stretching, edge trimming, multi-tier magnetic snapping (snap to 0, playhead, sections, and clip edges), and cross-asset clipboard.
-   - Isolated 3D viewport using `PreviewRenderUtility` with deterministic particle scrubbing (`ps.Simulate`).
+10. **Safe Root Motion Delegation**
+    - Dispatches filtered horizontal, vertical, and rotational delta components via `IMontageRootMotionReceiver` or C# events to external movement controllers (e.g., CharacterController) without mutating Transform directly.
+11. **Modern UI Toolkit Timeline Editor**
+    - Multi-track timeline with clip time-stretching, edge trimming, multi-tier magnetic snapping (snap to 0, playhead, sections, and clip edges), and cross-asset clipboard.
+    - Isolated 3D viewport using `PreviewRenderUtility` with deterministic particle scrubbing (`ps.Simulate`).
 
 ---
 

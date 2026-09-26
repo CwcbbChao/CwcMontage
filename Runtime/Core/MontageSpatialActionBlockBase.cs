@@ -178,4 +178,149 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
     }
+
+    /// <summary>
+    /// 具备空间挂载与位置同步能力的动作块强类型抽象基类。
+    /// 运行状态完全委托给 TState（继承自 MontageSpatialBlockState），实现动作块资产 100% 只读与 0-GC。
+    /// </summary>
+    /// <typeparam name="TState">继承自 MontageSpatialBlockState 的状态容器</typeparam>
+    [Serializable]
+    public abstract class MontageSpatialActionBlockBase<TState> : MontageActionBlockBase<TState>
+        where TState : MontageSpatialBlockState, new()
+    {
+        #region Inspector 字段
+
+        [Header("Attachment & Transform")]
+        [Tooltip("目标挂点骨骼（支持 8 个人形常用核心骨骼与 Root）。")]
+        [SerializeField] private MontageTargetBone _targetBone = MontageTargetBone.Root;
+
+        [Tooltip("附着与位置同步模式。")]
+        [SerializeField] private MontageAttachMode _attachMode = MontageAttachMode.FollowTarget;
+
+        [Tooltip("相对于目标挂点的局部位置偏移。")]
+        [SerializeField] private Vector3 _positionOffset = Vector3.zero;
+
+        [Tooltip("相对于目标挂点的局部旋转偏移（欧拉角）。")]
+        [SerializeField] private Vector3 _rotationOffset = Vector3.zero;
+
+        [Tooltip("相对于预制件的局部缩放倍率。")]
+        [SerializeField] private Vector3 _scale = Vector3.one;
+
+        #endregion
+
+        #region 公共属性
+
+        public MontageTargetBone TargetBone => _targetBone;
+        public MontageAttachMode AttachMode => _attachMode;
+        public Vector3 PositionOffset => _positionOffset;
+        public Vector3 RotationOffset => _rotationOffset;
+        public Vector3 Scale => _scale;
+
+        #endregion
+
+        #region 受保护的空间变换与生命周期辅助方法
+
+        /// <summary>
+        /// 解析并缓存目标挂点骨骼 Transform 到 state 中（零 GC 分配）。
+        /// </summary>
+        protected virtual void ResolveTargetBone(in MontageActionContext context, TState state)
+        {
+            if (state != null)
+            {
+                state.CachedTargetBone = context.GetTargetBone(_targetBone);
+            }
+        }
+
+        /// <summary>
+        /// 根据当前挂点骨骼与配置的偏移量，计算出目标世界坐标与世界旋转。
+        /// </summary>
+        protected void CalculateWorldTransform(TState state, out Vector3 worldPos, out Quaternion worldRot)
+        {
+            if (state != null && state.CachedTargetBone != null)
+            {
+                worldPos = state.CachedTargetBone.TransformPoint(_positionOffset);
+                worldRot = state.CachedTargetBone.rotation * Quaternion.Euler(_rotationOffset);
+            }
+            else
+            {
+                worldPos = _positionOffset;
+                worldRot = Quaternion.Euler(_rotationOffset);
+            }
+        }
+
+        /// <summary>
+        /// 计算在 Spawn 时应该设置的目标父级 Transform。
+        /// 严格杜绝将实例挂载为角色骨骼子物体，彻底免疫角色局部缩放畸变。
+        /// </summary>
+        protected Transform GetSpawnParent(in MontageActionContext context, bool isPreview = false)
+        {
+            return isPreview && context.TargetObject != null ? context.TargetObject.transform : null;
+        }
+
+        /// <summary>
+        /// 根据 AttachMode 外部驱动更新实例在世界空间的位置与旋转。
+        /// </summary>
+        protected void UpdateSpatialTransform(GameObject instance, in MontageActionContext context, TState state)
+        {
+            if (instance == null || _attachMode == MontageAttachMode.WorldPositionAtStart)
+            {
+                return;
+            }
+
+            if (state == null)
+            {
+                return;
+            }
+
+            if (state.CachedTargetBone == null)
+            {
+                ResolveTargetBone(context, state);
+                if (state.CachedTargetBone == null)
+                {
+                    return;
+                }
+            }
+
+            Vector3 currentWorldPos = state.CachedTargetBone.TransformPoint(_positionOffset);
+
+            if (_attachMode == MontageAttachMode.FollowTarget)
+            {
+                Quaternion currentWorldRot = state.CachedTargetBone.rotation * Quaternion.Euler(_rotationOffset);
+                instance.transform.SetPositionAndRotation(currentWorldPos, currentWorldRot);
+            }
+            else if (_attachMode == MontageAttachMode.FollowPositionOnly)
+            {
+                instance.transform.position = currentWorldPos;
+            }
+        }
+
+        #endregion
+
+        #region 编辑器视口预览辅助方法
+
+        /// <summary>
+        /// 编辑器视口预览下原地即时同步并更新预览物体的 Transform，无需重新销毁并重建。
+        /// </summary>
+        public virtual void UpdatePreviewTransform(GameObject instance, in MontageActionContext context)
+        {
+            if (instance == null) return;
+
+            var state = GetEditorPreviewState();
+            if (state == null) return;
+
+            ResolveTargetBone(context, state);
+            CalculateWorldTransform(state, out Vector3 worldPos, out Quaternion worldRot);
+
+            if (_attachMode == MontageAttachMode.FollowPositionOnly)
+            {
+                instance.transform.position = worldPos;
+            }
+            else
+            {
+                instance.transform.SetPositionAndRotation(worldPos, worldRot);
+            }
+        }
+
+        #endregion
+    }
 }

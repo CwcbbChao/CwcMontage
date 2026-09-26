@@ -22,6 +22,7 @@ namespace Cwcbb.Tools.CwcMontage
 
     /// <summary>
     /// 音效表现动作块（AudioActionBlock）。
+    /// 继承自 MontageActionBlockBase<AudioState>，运行时 0-GC 且资产完全只读化。
     /// 支持单音频与多音频随机池、3D 空间衰减、音高随机偏差与单次/循环淡出控制，
     /// 全面支持运行时专用通道池管理与编辑器 3D 视口非运行模式下的音频即时预览。
     /// </summary>
@@ -29,8 +30,29 @@ namespace Cwcbb.Tools.CwcMontage
     [MontageCategory("Audio")]
     [MontageDisplayName("Play Audio")]
     [MontageColor("#1E90FF")]
-    public class AudioActionBlock : MontageActionBlockBase
+    public class AudioActionBlock : MontageActionBlockBase<AudioActionBlock.AudioState>
     {
+        #region 内部状态定义 (纯运行时持有，随槽位复用)
+
+        /// <summary>
+        /// 音效动作块运行时动态状态。
+        /// </summary>
+        public class AudioState : IMontageBlockState
+        {
+            public AudioSource ActiveAudioSource;
+            public AudioClip SelectedClip;
+            public float RuntimeVolume;
+
+            public void Reset()
+            {
+                ActiveAudioSource = null;
+                SelectedClip = null;
+                RuntimeVolume = 0f;
+            }
+        }
+
+        #endregion
+
         #region 公共静态预览委托 (由 Editor 模块注入)
 
         public static Action<AudioClip, bool> PreviewAudioPlayHandler;
@@ -90,14 +112,6 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
 
-        #region 私有非序列化运行时字段
-
-        [NonSerialized] private AudioSource _activeAudioSource;
-        [NonSerialized] private AudioClip _selectedClip;
-        [NonSerialized] private float _runtimeVolume;
-
-        #endregion
-
         #region 公共属性
 
         public AudioClip AudioClip => _audioClip;
@@ -115,7 +129,7 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
 
-        #region 运行时生命周期 (由 MontagePlayer 调度)
+        #region 运行时生命周期 (强类型 0-GC 调度)
 
         public override bool CanEnter(in MontageActionContext context)
         {
@@ -123,27 +137,23 @@ namespace Cwcbb.Tools.CwcMontage
             return _audioClip != null || (_randomAudioClips != null && _randomAudioClips.Count > 0);
         }
 
-        public override void OnEnter(in MontageActionContext context)
+        protected override void OnEnter(in MontageActionContext context, AudioState state)
         {
-            base.OnEnter(context);
-
-            _selectedClip = SelectAudioClip();
-            if (_selectedClip == null)
+            state.SelectedClip = SelectAudioClip();
+            if (state.SelectedClip == null)
             {
                 return;
             }
 
-            // 从对象池获取 AudioSource 通道并配置播放（外部独立挂在池根节点，不侵入角色骨骼）
             var boneTransform = context.GetTargetBone(_targetBone);
             Vector3 spawnPos = boneTransform != null ? boneTransform.position : context.TargetObject.transform.position;
 
-            _activeAudioSource = MontageObjectPool.GetAudioSource(spawnPos, null);
-            if (_activeAudioSource == null)
+            state.ActiveAudioSource = MontageObjectPool.GetAudioSource(spawnPos, null);
+            if (state.ActiveAudioSource == null)
             {
                 return;
             }
 
-            // 原生音高：基础音高 + 随机微调（绝不附加时间轴拉伸变速）
             float finalPitch = _pitch;
             if (_randomPitchOffset > 0.001f)
             {
@@ -151,53 +161,49 @@ namespace Cwcbb.Tools.CwcMontage
             }
             finalPitch = Mathf.Clamp(finalPitch, 0.1f, 3.0f);
 
-            _runtimeVolume = Mathf.Clamp01(_volume);
-            _activeAudioSource.clip = _selectedClip;
-            _activeAudioSource.volume = _runtimeVolume;
-            _activeAudioSource.pitch = finalPitch;
-            _activeAudioSource.spatialBlend = _spatialBlend;
-            _activeAudioSource.minDistance = _minDistance;
-            _activeAudioSource.maxDistance = _maxDistance;
-            _activeAudioSource.loop = (_playMode == MontageAudioPlayMode.LoopDuringBlock);
-            _activeAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
+            state.RuntimeVolume = Mathf.Clamp01(_volume);
+            state.ActiveAudioSource.clip = state.SelectedClip;
+            state.ActiveAudioSource.volume = state.RuntimeVolume;
+            state.ActiveAudioSource.pitch = finalPitch;
+            state.ActiveAudioSource.spatialBlend = _spatialBlend;
+            state.ActiveAudioSource.minDistance = _minDistance;
+            state.ActiveAudioSource.maxDistance = _maxDistance;
+            state.ActiveAudioSource.loop = (_playMode == MontageAudioPlayMode.LoopDuringBlock);
+            state.ActiveAudioSource.rolloffMode = AudioRolloffMode.Logarithmic;
 
-            _activeAudioSource.Play();
+            state.ActiveAudioSource.Play();
         }
 
-        public override void OnUpdate(in MontageActionContext context, float deltaTime)
+        protected override void OnUpdate(in MontageActionContext context, AudioState state, float deltaTime)
         {
-            // 实时外部同步 3D 发声位置（保持独立层级，不侵入骨骼子物体）
-            if (_activeAudioSource != null && _spatialBlend > 0.01f)
+            if (state.ActiveAudioSource != null && _spatialBlend > 0.01f)
             {
                 var boneTransform = context.GetTargetBone(_targetBone);
                 if (boneTransform != null)
                 {
-                    _activeAudioSource.transform.position = boneTransform.position;
+                    state.ActiveAudioSource.transform.position = boneTransform.position;
                 }
             }
 
-            // 单次播放模式若已自然播完，提前安全回收通道
-            if (_playMode == MontageAudioPlayMode.OneShot && _activeAudioSource != null)
+            if (_playMode == MontageAudioPlayMode.OneShot && state.ActiveAudioSource != null)
             {
-                if (!_activeAudioSource.isPlaying)
+                if (!state.ActiveAudioSource.isPlaying)
                 {
-                    MontageObjectPool.RecycleAudioSource(_activeAudioSource);
-                    _activeAudioSource = null;
+                    MontageObjectPool.RecycleAudioSource(state.ActiveAudioSource);
+                    state.ActiveAudioSource = null;
                 }
             }
         }
 
-        public override void OnExit(in MontageActionContext context)
+        protected override void OnExit(in MontageActionContext context, AudioState state)
         {
-            base.OnExit(context);
-
-            if (_activeAudioSource != null)
+            if (state.ActiveAudioSource != null)
             {
-                MontageObjectPool.RecycleAudioSource(_activeAudioSource);
-                _activeAudioSource = null;
+                MontageObjectPool.RecycleAudioSource(state.ActiveAudioSource);
+                state.ActiveAudioSource = null;
             }
 
-            _selectedClip = null;
+            state.SelectedClip = null;
         }
 
         #endregion
@@ -214,24 +220,18 @@ namespace Cwcbb.Tools.CwcMontage
         {
             base.OnPreviewEnter(context);
 
-            _selectedClip = SelectAudioClip();
-            if (_selectedClip == null)
-            {
-                return;
-            }
+            var clip = SelectAudioClip();
+            if (clip == null) return;
 
-            // 通过专用音频预览工具原速输出声音
             PreviewAudioPlayHandler?.Invoke(
-                _selectedClip,
+                clip,
                 _playMode == MontageAudioPlayMode.LoopDuringBlock);
         }
 
         public override void OnPreviewExit(in MontageActionContext context)
         {
             base.OnPreviewExit(context);
-
             PreviewAudioStopHandler?.Invoke();
-            _selectedClip = null;
         }
 
         public override bool RequiresPreviewRecreate(MontageActionBlockBase newBlock)
@@ -249,11 +249,10 @@ namespace Cwcbb.Tools.CwcMontage
         public override string GetTimingCustomHint()
         {
             if (_audioClip == null && (_randomAudioClips == null || _randomAudioClips.Count == 0)) return null;
-            string clipName = _selectedClip != null ? _selectedClip.name : (_audioClip != null ? _audioClip.name : "Random");
+            string clipName = _audioClip != null ? _audioClip.name : "Random";
             float dur = _audioClip != null ? _audioClip.length : 0f;
             return $"Clip: {clipName} ({dur:F2}s)";
         }
-
 
         #endregion
 
@@ -280,9 +279,6 @@ namespace Cwcbb.Tools.CwcMontage
             return _audioClip;
         }
 
-        /// <summary>
-        /// 针对 Unity 6 / Fast Enter Play Mode 重置编辑器静态预览委托。
-        /// </summary>
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
         private static void ResetStaticEventsOnEnterPlayMode()
         {

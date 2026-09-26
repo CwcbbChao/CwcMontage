@@ -110,6 +110,20 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
 
+        #region 公共属性 (状态元数据与工厂)
+
+        /// <summary>
+        /// 动作块运行时状态的具体类型。无动态状态则返回 null。
+        /// </summary>
+        public virtual Type StateType => null;
+
+        /// <summary>
+        /// 实例化该动作块所需的动态状态对象。
+        /// </summary>
+        public virtual IMontageBlockState CreateState() => null;
+
+        #endregion
+
         #region 公共方法 (运行时生命周期钩子)
 
         /// <summary>
@@ -123,7 +137,7 @@ namespace Cwcbb.Tools.CwcMontage
         }
 
         /// <summary>
-        /// 当时间轴首次进入动作块时间区间时触发（运行时专用）。
+        /// 当时间轴首次进入动作块时间区间时触发（向后兼容重载）。
         /// </summary>
         /// <param name="context">当前动画帧执行上下文</param>
         public virtual void OnEnter(in MontageActionContext context)
@@ -132,7 +146,17 @@ namespace Cwcbb.Tools.CwcMontage
         }
 
         /// <summary>
-        /// 在动作块有效时间区间内每帧持续更新（运行时专用）。
+        /// 当时间轴首次进入动作块时间区间时触发（0-GC 运行时专用调度接口）。
+        /// </summary>
+        /// <param name="context">当前动画帧执行上下文</param>
+        /// <param name="state">当前分配的状态槽位实例</param>
+        public virtual void OnEnter(in MontageActionContext context, IMontageBlockState state)
+        {
+            OnEnter(context);
+        }
+
+        /// <summary>
+        /// 在动作块有效时间区间内每帧持续更新（向后兼容重载）。
         /// </summary>
         /// <param name="context">当前动画帧执行上下文</param>
         /// <param name="deltaTime">自上一帧经过的有效时间步长</param>
@@ -141,12 +165,33 @@ namespace Cwcbb.Tools.CwcMontage
         }
 
         /// <summary>
-        /// 当时间轴离开动作块时间区间、或动画被外部打断/跳转退出时触发（运行时专用）。
+        /// 在动作块有效时间区间内每帧持续更新（0-GC 运行时专用调度接口）。
+        /// </summary>
+        /// <param name="context">当前动画帧执行上下文</param>
+        /// <param name="state">当前分配的状态槽位实例</param>
+        /// <param name="deltaTime">自上一帧经过的有效时间步长</param>
+        public virtual void OnUpdate(in MontageActionContext context, IMontageBlockState state, float deltaTime)
+        {
+            OnUpdate(context, deltaTime);
+        }
+
+        /// <summary>
+        /// 当时间轴离开动作块时间区间、或动画被外部打断/跳转退出时触发（向后兼容重载）。
         /// </summary>
         /// <param name="context">当前动画帧执行上下文</param>
         public virtual void OnExit(in MontageActionContext context)
         {
             _isActive = false;
+        }
+
+        /// <summary>
+        /// 当时间轴离开动作块时间区间、或动画被外部打断/跳转退出时触发（0-GC 运行时专用调度接口）。
+        /// </summary>
+        /// <param name="context">当前动画帧执行上下文</param>
+        /// <param name="state">当前分配的状态槽位实例</param>
+        public virtual void OnExit(in MontageActionContext context, IMontageBlockState state)
+        {
+            OnExit(context);
         }
 
         #endregion
@@ -236,6 +281,123 @@ namespace Cwcbb.Tools.CwcMontage
         {
             return (MontageActionBlockBase)MemberwiseClone();
         }
+
+        #endregion
+    }
+
+    /// <summary>
+    /// 面向强类型状态的蒙太奇动作块抽象泛型基类。
+    /// 泛型约束 TState 为 class，彻底排除值类型装箱；入参提供强类型 state 实例，
+    /// 引导开发者将运行时变量写在 State 中，实现动作块资产 100% 只读化与单次播放 0-GC。
+    /// </summary>
+    /// <typeparam name="TState">继承自 IMontageBlockState 的引用类型状态容器</typeparam>
+    [Serializable]
+    public abstract class MontageActionBlockBase<TState> : MontageActionBlockBase
+        where TState : class, IMontageBlockState, new()
+    {
+        #region 私有非序列化字段 (仅供编辑器视口预览专用)
+
+        [NonSerialized] private TState _previewState;
+
+        #endregion
+
+        #region 公共属性 (状态元数据与工厂)
+
+        public sealed override Type StateType => typeof(TState);
+        public sealed override IMontageBlockState CreateState() => new TState();
+
+        #endregion
+
+        #region 公共重写调度方法 (运行时多态无装箱分发)
+
+        public sealed override void OnEnter(in MontageActionContext context, IMontageBlockState state)
+        {
+            base.OnEnter(context);
+            if (state is TState typedState)
+            {
+                OnEnter(context, typedState);
+            }
+        }
+
+        public sealed override void OnUpdate(in MontageActionContext context, IMontageBlockState state, float deltaTime)
+        {
+            base.OnUpdate(context, deltaTime);
+            if (state is TState typedState)
+            {
+                OnUpdate(context, typedState, deltaTime);
+            }
+        }
+
+        public sealed override void OnExit(in MontageActionContext context, IMontageBlockState state)
+        {
+            if (state is TState typedState)
+            {
+                OnExit(context, typedState);
+            }
+            base.OnExit(context);
+        }
+
+        #endregion
+
+        #region 受保护的强类型生命周期方法
+
+        /// <summary>
+        /// 当时间轴首次进入动作块时间区间时触发（强类型运行时专用）。
+        /// </summary>
+        /// <param name="context">当前动画帧执行上下文</param>
+        /// <param name="state">当前分配的强类型状态实例</param>
+        protected abstract void OnEnter(in MontageActionContext context, TState state);
+
+        /// <summary>
+        /// 在动作块有效时间区间内每帧持续更新（强类型运行时专用）。
+        /// </summary>
+        /// <param name="context">当前动画帧执行上下文</param>
+        /// <param name="state">当前分配的强类型状态实例</param>
+        /// <param name="deltaTime">自上一帧经过的有效时间步长</param>
+        protected virtual void OnUpdate(in MontageActionContext context, TState state, float deltaTime) { }
+
+        /// <summary>
+        /// 当时间轴离开动作块区间或动画被外部打断退出时触发（强类型运行时专用）。
+        /// </summary>
+        /// <param name="context">当前动画帧执行上下文</param>
+        /// <param name="state">当前分配的强类型状态实例</param>
+        protected abstract void OnExit(in MontageActionContext context, TState state);
+
+        #endregion
+
+        #region 编辑器视口预览适配 (复用 _previewState，对编辑器 UI 保持透明兼容)
+
+        public override void OnPreviewEnter(in MontageActionContext context)
+        {
+            base.OnPreviewEnter(context);
+            if (_previewState == null)
+            {
+                _previewState = new TState();
+            }
+            else
+            {
+                _previewState.Reset();
+            }
+        }
+
+        public override void OnPreviewUpdate(in MontageActionContext context, float deltaTime)
+        {
+            base.OnPreviewUpdate(context, deltaTime);
+        }
+
+        public override void OnPreviewExit(in MontageActionContext context)
+        {
+            if (_previewState != null)
+            {
+                _previewState.Reset();
+            }
+            base.OnPreviewExit(context);
+        }
+
+        /// <summary>
+        /// 获取当前编辑器视口专用的预览状态实例。
+        /// </summary>
+        protected TState GetEditorPreviewState() => _previewState;
 
         #endregion
     }
