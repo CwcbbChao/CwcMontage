@@ -558,6 +558,7 @@ namespace Cwcbb.Tools.CwcMontage
             _locomotionPlayable = AnimatorControllerPlayable.Create(_playableGraph, newController);
             _topLevelMixer.ConnectInput(0, _locomotionPlayable, 0);
             _topLevelMixer.SetInputWeight(0, 1.0f);
+            CheckSingleLayerControllerWarning();
         }
 
         /// <summary>
@@ -668,6 +669,7 @@ namespace Cwcbb.Tools.CwcMontage
                 _locomotionPlayable = AnimatorControllerPlayable.Create(_playableGraph, _originalController);
                 _topLevelMixer.ConnectInput(0, _locomotionPlayable, 0);
                 _topLevelMixer.SetInputWeight(0, 1.0f);
+                CheckSingleLayerControllerWarning();
             }
             else
             {
@@ -720,6 +722,19 @@ namespace Cwcbb.Tools.CwcMontage
             }
 
             _isGraphInitialized = false;
+        }
+
+        private void CheckSingleLayerControllerWarning()
+        {
+            if (_animator != null && _animator.isHuman && _locomotionPlayable.IsValid() && _locomotionPlayable.GetLayerCount() <= 1)
+            {
+                string controllerName = _originalController != null ? _originalController.name : "Unknown";
+                Debug.LogWarning(
+                    $"[MontageCoordinator] 角色 '{gameObject.name}' 绑定的动画器控制器 '{controllerName}' 仅包含 1 个图层 (Base Layer)。\n" +
+                    "【Unity 原生已知缺陷警告】：Unity 原生 Humanoid 求解器在与 Playables 层混音器结合时，若底层控制器只有单层，会自动触发单层质心重定向 (Mass Center Retargeting) 计算，导致播放上半身蒙太奇时底层角色的骨盆 (Hips) 与身体朝向产生异常扭曲偏转。\n" +
+                    "【推荐修复方案】：请在 '{controllerName}' 中添加一个空的图层 (如命名为 'EmptyLayer'，权重设为 0 即可)。当控制器层数 >= 2 时，Unity 会自动切换到标准多层管线，彻底消除该偏转现象。",
+                    this);
+            }
         }
 
         #endregion

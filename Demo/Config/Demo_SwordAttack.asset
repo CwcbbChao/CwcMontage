@@ -193,7 +193,7 @@ MonoBehaviour:
         _isEnabled: 1
         _targetBone: 0
         _attachMode: 0
-        _positionOffset: {x: -0.1, y: 1.3, z: 0.4}
+        _positionOffset: {x: -0.1, y: 1, z: 0.4}
         _rotationOffset: {x: 50, y: 90, z: 90}
         _scale: {x: 1.2, y: 1.2, z: 1.2}
         _vfxPrefab: {fileID: 7093971788546248907, guid: 642cfaef05241114aa8ba8c27ca62c3e,
