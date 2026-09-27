@@ -159,17 +159,17 @@ MonoBehaviour:
   _applyVerticalRootMotion: 0
   _applyRotationRootMotion: 0
   _splitTimestamps:
-  - 0.26666668
-  - 0.53333336
+  - 0.23333335
+  - 0.5666667
   _tracks:
   - _trackName: Track 1
     _isMuted: 0
     _isLocked: 0
     _actionBlocks:
-    - _startTime: 0.26666668
-      _endTime: 0.76666665
-      _startFrame: 8
-      _endFrame: 23
+    - _startTime: 0.2
+      _endTime: 0.7
+      _startFrame: 6
+      _endFrame: 21
       _action:
         rid: 5062639917469795183
   references:

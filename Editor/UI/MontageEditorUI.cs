@@ -152,6 +152,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _root.RegisterCallback<KeyDownEvent>(OnKeyDown);
             _lastEditorTime = EditorApplication.timeSinceStartup;
             EditorApplication.update += OnUpdateTick;
+
+            // 注册全局 Undo/Redo 事务监听，实现撤销/重做 0 延迟即时刷新
+            Undo.undoRedoPerformed += HandleUndoRedoPerformed;
         }
 
         #endregion
@@ -172,11 +175,98 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public void Dispose()
         {
+            Undo.undoRedoPerformed -= HandleUndoRedoPerformed;
             EditorApplication.update -= OnUpdateTick;
             CleanupPlayablesAndPreview();
             MontageAudioPreviewUtility.StopAllClips();
             _root?.Unbind();
             _root?.Clear();
+        }
+
+        private void HandleUndoRedoPerformed()
+        {
+            if (_targetAsset == null) return;
+
+            // 1. 同步序列化对象缓存
+            if (_serializedObject != null)
+            {
+                _serializedObject.Update();
+            }
+
+            // 2. 重新排列各通道 Segments，确保排序与验证合法
+            _targetAsset.SortAllChannelSegments();
+            _targetAsset.EnsureSegmentsValid();
+
+            // 3. 重构表现轨道与动画轨道元素
+            RebuildTracks();
+            _additiveTrackElement?.RebuildSegments();
+            _fullBodyTrackElement?.RebuildSegments();
+            _upperBodyTrackElement?.RebuildSegments();
+
+            // 4. 同步时间轴尺寸、网格、标尺、分段轨道与图层下拉栏
+            UpdateTimelineLengthsAndSync(fullRebuild: true, markDirty: false, rebuildRuntimeBlocks: true);
+            UpdateLayersDropdownVisual();
+
+            // 5. 校验并刷新检查器 (Inspector) 选中目标
+            RefreshInspectorSelectionAfterUndo();
+
+            // 6. 暂停状态下立即重新求值并重绘视口
+            if (!_isPlaying)
+            {
+                EvaluateTimeAndPreviewLogic(0f);
+                _viewport?.RenderImmediate();
+            }
+
+            _root?.MarkDirtyRepaint();
+            OnAssetModified?.Invoke();
+        }
+
+        private void RefreshInspectorSelectionAfterUndo()
+        {
+            if (_inspector == null || _targetAsset == null) return;
+
+            // 检查当前选中的 ActionBlock 是否依然有效存在
+            if (_selectedBlock != null)
+            {
+                bool blockFound = false;
+                int trackIdx = _selectedBlock.TrackIndex;
+                if (trackIdx >= 0 && trackIdx < _targetAsset.Tracks.Count)
+                {
+                    var track = _targetAsset.Tracks[trackIdx];
+                    if (track?.ActionBlocks != null && _selectedBlock.BlockIndex >= 0 && _selectedBlock.BlockIndex < track.ActionBlocks.Count)
+                    {
+                        var data = track.ActionBlocks[_selectedBlock.BlockIndex];
+                        if (data == _selectedBlock.Data)
+                        {
+                            blockFound = true;
+                            _inspector.InspectActionBlock(_selectedBlock);
+                        }
+                    }
+                }
+
+                if (!blockFound)
+                {
+                    _selectedBlock = null;
+                    _inspector.ClearActionInspect();
+                }
+            }
+
+            // 检查当前选中的 AnimationSegment 是否依然有效存在
+            if (_selectedSegment != null && _selectedAnimationTrack != null)
+            {
+                var segments = _targetAsset.GetSegments(_selectedAnimationTrack.Channel);
+                if (segments != null && segments.Contains(_selectedSegment))
+                {
+                    int segIdx = segments.IndexOf(_selectedSegment);
+                    _inspector.InspectAnimationSegment(_selectedSegment, segIdx, _targetAsset);
+                }
+                else
+                {
+                    _selectedSegment = null;
+                    _selectedAnimationTrack = null;
+                    _inspector.ClearActionInspect();
+                }
+            }
         }
 
         #endregion
@@ -2267,33 +2357,42 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         {
             if (_targetAsset == null) return;
 
+            Undo.RecordObject(_targetAsset, "Add Section Split");
             var splits = new List<float>(_targetAsset.SplitTimestamps);
             splits.Add(time);
             _targetAsset.SetSplitTimestamps(splits);
+            EditorUtility.SetDirty(_targetAsset);
 
             UpdateTimelineLengthsAndSync(fullRebuild: false);
+            OnAssetModified?.Invoke();
         }
 
         private void MoveSplitTimestamp(int splitIndex, float newTime)
         {
             if (_targetAsset?.SplitTimestamps == null || splitIndex < 0 || splitIndex >= _targetAsset.SplitTimestamps.Count) return;
 
+            Undo.RecordObject(_targetAsset, "Move Section Split");
             var splits = new List<float>(_targetAsset.SplitTimestamps);
             splits[splitIndex] = newTime;
             _targetAsset.SetSplitTimestamps(splits);
+            EditorUtility.SetDirty(_targetAsset);
 
             UpdateTimelineLengthsAndSync(fullRebuild: false);
+            OnAssetModified?.Invoke();
         }
 
         private void RemoveSplitTimestamp(int splitIndex)
         {
             if (_targetAsset?.SplitTimestamps == null || splitIndex < 0 || splitIndex >= _targetAsset.SplitTimestamps.Count) return;
 
+            Undo.RecordObject(_targetAsset, "Remove Section Split");
             var splits = new List<float>(_targetAsset.SplitTimestamps);
             splits.RemoveAt(splitIndex);
             _targetAsset.SetSplitTimestamps(splits);
+            EditorUtility.SetDirty(_targetAsset);
 
             UpdateTimelineLengthsAndSync(fullRebuild: false);
+            OnAssetModified?.Invoke();
         }
 
         #endregion
@@ -2333,6 +2432,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public void AddNewTrack()
         {
+            if (_targetAsset == null) return;
+            Undo.RecordObject(_targetAsset, "Add New Track");
             _targetAsset.Tracks.Add(new MontageTrackData($"Track {_targetAsset.Tracks.Count + 1}"));
             RebuildTracks();
             EditorUtility.SetDirty(_targetAsset);
@@ -2341,6 +2442,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public void InsertTrackBelow(MontageTrackElement track)
         {
+            if (_targetAsset == null) return;
+            Undo.RecordObject(_targetAsset, "Insert Track Below");
             int index = track != null ? track.TrackIndex + 1 : _targetAsset.Tracks.Count;
             index = Mathf.Clamp(index, 0, _targetAsset.Tracks.Count);
 
@@ -2352,9 +2455,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public void PasteCopiedTrackAsNew()
         {
+            if (_targetAsset == null) return;
             var cloned = MontageClipboard.GetClonedTrack();
             if (cloned == null) return;
 
+            Undo.RecordObject(_targetAsset, "Paste Copied Track As New");
             _targetAsset.Tracks.Add(cloned);
             RebuildTracks();
             EditorUtility.SetDirty(_targetAsset);
@@ -2363,9 +2468,11 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public void PasteNewTrackBelow(MontageTrackElement track)
         {
+            if (_targetAsset == null) return;
             var cloned = MontageClipboard.GetClonedTrack();
             if (cloned == null) return;
 
+            Undo.RecordObject(_targetAsset, "Paste New Track Below");
             int index = track != null ? track.TrackIndex + 1 : _targetAsset.Tracks.Count;
             index = Mathf.Clamp(index, 0, _targetAsset.Tracks.Count);
 
@@ -2377,8 +2484,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         public void DuplicateTrack(MontageTrackElement track)
         {
-            if (track?.TrackData == null) return;
+            if (_targetAsset == null || track?.TrackData == null) return;
 
+            Undo.RecordObject(_targetAsset, "Duplicate Track");
             var cloned = track.TrackData.Clone();
             int insertIndex = track.TrackIndex + 1;
             _targetAsset.Tracks.Insert(insertIndex, cloned);
@@ -2389,8 +2497,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void DuplicateBlock(MontageActionBlockElement block)
         {
-            if (block?.Data == null || block.TrackIndex < 0 || block.TrackIndex >= _targetAsset.Tracks.Count) return;
+            if (_targetAsset == null || block?.Data == null || block.TrackIndex < 0 || block.TrackIndex >= _targetAsset.Tracks.Count) return;
 
+            Undo.RecordObject(_targetAsset, "Duplicate Action Block");
             var cloned = block.Data.Clone();
             int duration = Mathf.Max(1, cloned.EndFrame - cloned.StartFrame);
             int newStart = block.Data.EndFrame;
@@ -2404,10 +2513,15 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _targetAsset.Tracks[block.TrackIndex].ActionBlocks.Add(cloned);
             UpdateTimelineLengthsAndSync(fullRebuild: false);
             RebuildTracks();
+            EditorUtility.SetDirty(_targetAsset);
+            OnAssetModified?.Invoke();
         }
 
         private void AddBlockToTrack(MontageTrackElement track, Type actionType, float timeAtClick)
         {
+            if (_targetAsset == null || track?.TrackData == null) return;
+
+            Undo.RecordObject(_targetAsset, "Add Action Block");
             int startFrame = Mathf.Max(0, Mathf.RoundToInt(timeAtClick * _frameRate));
             int endFrame = startFrame + 5;
 
@@ -2423,13 +2537,17 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             track.TrackData.ActionBlocks.Add(newBlock);
             UpdateTimelineLengthsAndSync(fullRebuild: false);
             track.RebuildBlocks();
+            EditorUtility.SetDirty(_targetAsset);
+            OnAssetModified?.Invoke();
         }
 
         private void PasteBlockToTrack(MontageTrackElement track, float timeAtClick)
         {
+            if (_targetAsset == null || track?.TrackData == null) return;
             var cloned = MontageClipboard.GetClonedBlock();
             if (cloned == null || cloned.Action == null) return;
 
+            Undo.RecordObject(_targetAsset, "Paste Action Block");
             int duration = Mathf.Max(1, cloned.EndFrame - cloned.StartFrame);
             int startFrame = Mathf.Max(0, Mathf.RoundToInt(timeAtClick * _frameRate));
             int endFrame = startFrame + duration;
@@ -2442,35 +2560,47 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             track.TrackData.ActionBlocks.Add(cloned);
             UpdateTimelineLengthsAndSync(fullRebuild: false);
             track.RebuildBlocks();
+            EditorUtility.SetDirty(_targetAsset);
+            OnAssetModified?.Invoke();
         }
 
         private void PasteTrackToTrack(MontageTrackElement track)
         {
+            if (_targetAsset == null || track == null) return;
             var clonedTrack = MontageClipboard.GetClonedTrack();
             if (clonedTrack == null) return;
 
+            Undo.RecordObject(_targetAsset, "Paste Track Override");
             _targetAsset.Tracks[track.TrackIndex] = clonedTrack;
             UpdateTimelineLengthsAndSync(fullRebuild: false);
             RebuildTracks();
+            EditorUtility.SetDirty(_targetAsset);
+            OnAssetModified?.Invoke();
         }
 
         private void DeleteTrack(MontageTrackElement track)
         {
+            if (_targetAsset == null || track == null) return;
             if (track.TrackIndex >= 0 && track.TrackIndex < _targetAsset.Tracks.Count)
             {
+                Undo.RecordObject(_targetAsset, "Delete Track");
                 _targetAsset.Tracks.RemoveAt(track.TrackIndex);
                 _inspector.ClearActionInspect();
                 UpdateTimelineLengthsAndSync(fullRebuild: false);
                 RebuildTracks();
+                EditorUtility.SetDirty(_targetAsset);
+                OnAssetModified?.Invoke();
             }
         }
 
         private void MoveTrack(MontageTrackElement track, int delta)
         {
+            if (_targetAsset == null || track == null) return;
             int oldIndex = track.TrackIndex;
             int newIndex = oldIndex + delta;
             if (newIndex < 0 || newIndex >= _targetAsset.Tracks.Count) return;
 
+            Undo.RecordObject(_targetAsset, "Move Track");
             var t = _targetAsset.Tracks[oldIndex];
             _targetAsset.Tracks.RemoveAt(oldIndex);
             _targetAsset.Tracks.Insert(newIndex, t);
@@ -2519,6 +2649,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             int fromIndex = draggingTrack.TrackIndex;
             if (targetIndex != fromIndex && targetIndex != fromIndex + 1)
             {
+                Undo.RecordObject(_targetAsset, "Reorder Tracks");
                 var t = _targetAsset.Tracks[fromIndex];
                 _targetAsset.Tracks.RemoveAt(fromIndex);
                 int insertIndex = (targetIndex > fromIndex) ? targetIndex - 1 : targetIndex;

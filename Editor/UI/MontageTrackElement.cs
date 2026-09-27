@@ -131,7 +131,15 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _trackTitleField.isDelayed = true;
             _trackTitleField.RegisterValueChangedCallback(evt =>
             {
+                if (_targetAsset != null)
+                {
+                    Undo.RecordObject(_targetAsset, "Rename Track");
+                }
                 _trackData.TrackName = evt.newValue;
+                if (_targetAsset != null)
+                {
+                    EditorUtility.SetDirty(_targetAsset);
+                }
                 OnDataModified?.Invoke();
             });
             titleBox.Add(_trackTitleField);
@@ -234,6 +242,10 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 {
                     if (!_trackData.IsLocked && block.Data != null)
                     {
+                        if (_targetAsset != null)
+                        {
+                            Undo.RecordObject(_targetAsset, "Duplicate Action Block");
+                        }
                         var cloned = block.Data.Clone();
                         int frameLen = Mathf.Max(1, block.Data.EndFrame - block.Data.StartFrame);
                         cloned.StartFrame = block.Data.EndFrame;
@@ -243,6 +255,10 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                         cloned.EndTime = cloned.EndFrame * frameInterval;
                         _trackData.ActionBlocks.Add(cloned);
                         RebuildBlocks();
+                        if (_targetAsset != null)
+                        {
+                            EditorUtility.SetDirty(_targetAsset);
+                        }
                         OnDataModified?.Invoke();
                     }
                 };
@@ -250,8 +266,16 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 {
                     if (!_trackData.IsLocked)
                     {
+                        if (_targetAsset != null)
+                        {
+                            Undo.RecordObject(_targetAsset, "Delete Action Block");
+                        }
                         _trackData.ActionBlocks.RemoveAt(block.BlockIndex);
                         RebuildBlocks();
+                        if (_targetAsset != null)
+                        {
+                            EditorUtility.SetDirty(_targetAsset);
+                        }
                         OnDataModified?.Invoke();
                     }
                 };
@@ -414,8 +438,16 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void ToggleMute()
         {
+            if (_targetAsset != null)
+            {
+                Undo.RecordObject(_targetAsset, _trackData.IsMuted ? "Unmute Track" : "Mute Track");
+            }
             _trackData.IsMuted = !_trackData.IsMuted;
             UpdateMuteVisual();
+            if (_targetAsset != null)
+            {
+                EditorUtility.SetDirty(_targetAsset);
+            }
             OnDataModified?.Invoke();
         }
 
@@ -435,8 +467,16 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void ToggleLock()
         {
+            if (_targetAsset != null)
+            {
+                Undo.RecordObject(_targetAsset, _trackData.IsLocked ? "Unlock Track" : "Lock Track");
+            }
             _trackData.IsLocked = !_trackData.IsLocked;
             UpdateLockVisual();
+            if (_targetAsset != null)
+            {
+                EditorUtility.SetDirty(_targetAsset);
+            }
             OnDataModified?.Invoke();
         }
 
