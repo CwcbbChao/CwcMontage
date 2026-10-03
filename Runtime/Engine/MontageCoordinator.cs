@@ -34,7 +34,7 @@ namespace Cwcbb.Tools.CwcMontage
     {
         #region 内部数据结构
 
-        private class SlotState
+        protected class SlotState
         {
             public readonly int SlotIndex;
             public AnimationMixerPlayable SlotMixer;
@@ -96,7 +96,7 @@ namespace Cwcbb.Tools.CwcMontage
             }
         }
 
-        private class LayerRuntimeState
+        protected class LayerRuntimeState
         {
             public readonly MontageLayerChannel Channel;
             public readonly int LayerIndex; // 0: UpperBody, 1: FullBody, 2: Additive
@@ -133,24 +133,28 @@ namespace Cwcbb.Tools.CwcMontage
         [Min(0.0001f)]
         [SerializeField] private float _globalPlaybackRate = 1.0f;
 
+        [Header("Playables Integration")]
+        [Tooltip("是否由本协调器在 Update 中自动调用 Evaluate 推进图采样。当与 Animancer 等自带更新管线的外部宿主配合时，可设为 false 以防双重评估。")]
+        [SerializeField] private bool _autoEvaluateGraph = true;
+
         #endregion
 
-        #region 私有字段
+        #region 保护与私有字段
 
-        private PlayableGraph _playableGraph;
-        private AnimationLayerMixerPlayable _topLevelMixer;
-        private AnimatorControllerPlayable _locomotionPlayable;
-        private RuntimeAnimatorController _originalController;
-        private MontageAnimatorDispatcher _animatorDispatcher;
+        protected PlayableGraph _playableGraph;
+        protected AnimationLayerMixerPlayable _topLevelMixer;
+        protected Playable _locomotionPlayable;
+        protected RuntimeAnimatorController _originalController;
+        protected MontageAnimatorDispatcher _animatorDispatcher;
 
-        private readonly List<LayerRuntimeState> _layerStates = new(3);
-        private readonly Transform[] _cachedBones = new Transform[MontageBoneUtility.BONE_COUNT];
-        private readonly HashSet<MontagePlayer> _tickablePlayers = new(4);
-        private readonly List<MontagePlayer> _playerPool = new(3);
-        private readonly List<MontagePlayer> _activePlayers = new(3);
-        private IMontageRootMotionReceiver _cachedReceiver;
+        protected readonly List<LayerRuntimeState> _layerStates = new(3);
+        protected readonly Transform[] _cachedBones = new Transform[MontageBoneUtility.BONE_COUNT];
+        protected readonly HashSet<MontagePlayer> _tickablePlayers = new(4);
+        protected readonly List<MontagePlayer> _playerPool = new(3);
+        protected readonly List<MontagePlayer> _activePlayers = new(3);
+        protected IMontageRootMotionReceiver _cachedReceiver;
 
-        private bool _isGraphInitialized;
+        protected bool _isGraphInitialized;
 
         #endregion
 
@@ -205,6 +209,49 @@ namespace Cwcbb.Tools.CwcMontage
             set => _globalPlaybackRate = Mathf.Max(0.0001f, value);
         }
 
+        /// <summary>
+        /// 顶层图层混合器根 Playable 节点，便于外部 Playables 系统（如 Animancer 等）将蒙太奇整体作为图层直接接入外部主图。
+        /// </summary>
+        public Playable RootPlayable => _topLevelMixer;
+
+        /// <summary>
+        /// 是否由本协调器在 Update 中自动调用 Evaluate 推进图采样。
+        /// </summary>
+        public bool AutoEvaluateGraph
+        {
+            get => _autoEvaluateGraph;
+            set => _autoEvaluateGraph = value;
+        }
+
+        #endregion
+
+        #region 保护属性
+
+        /// <summary>
+        /// 当帧 Update 中是否执行 PlayableGraph.Evaluate。子类可直接重写此属性以动态决定是否由本协调器推进图采样。
+        /// </summary>
+        protected virtual bool ShouldEvaluateGraph => _autoEvaluateGraph;
+
+        /// <summary>
+        /// 底层运行时的 PlayableGraph 实例。
+        /// </summary>
+        protected PlayableGraph Graph => _playableGraph;
+
+        /// <summary>
+        /// 顶层混合器 (Top-Level Layer Mixer)。
+        /// </summary>
+        protected AnimationLayerMixerPlayable TopLevelMixer => _topLevelMixer;
+
+        /// <summary>
+        /// 所有图层运行时状态列表。
+        /// </summary>
+        protected IReadOnlyList<LayerRuntimeState> LayerStates => _layerStates;
+
+        /// <summary>
+        /// 绑定的 Animator 组件。
+        /// </summary>
+        protected Animator AnimatorComponent => _animator;
+
         #endregion
 
         #region 公共事件
@@ -234,14 +281,14 @@ namespace Cwcbb.Tools.CwcMontage
 
         #region Unity 生命周期
 
-        private void Awake()
+        protected virtual void Awake()
         {
             EnsureAnimator();
             _cachedReceiver = GetComponent<IMontageRootMotionReceiver>();
             InitializePlayableGraph();
         }
 
-        private void Update()
+        protected virtual void Update()
         {
             if (!_isGraphInitialized || !_playableGraph.IsValid())
             {
@@ -254,13 +301,24 @@ namespace Cwcbb.Tools.CwcMontage
             UpdateLayers(effectiveDelta);
 
             // 2. 后手动推进 PlayableGraph 采样（驱动子层级 Animator 采样并在 OnAnimatorMove 中分发 Root Motion）
-            _playableGraph.Evaluate(effectiveDelta);
+            if (ShouldEvaluateGraph)
+            {
+                _playableGraph.Evaluate(effectiveDelta);
+            }
+        }
 
-            // 3. 上半身基准骨骼相对根节点解耦姿态修正（消除下半身骨盆奔跑倾斜与晃动，还原侧身/平刺等源动画真实朝向）
+        protected virtual void LateUpdate()
+        {
+            if (!_isGraphInitialized || !_playableGraph.IsValid())
+            {
+                return;
+            }
+
+            // 上半身基准骨骼相对根节点解耦姿态修正（在当帧所有动画求值完成后执行，消除下半身骨盆奔跑倾斜与晃动，还原侧身/平刺等源动画真实朝向）
             ApplyUpperBodySpineDecoupling();
         }
 
-        private void OnDestroy()
+        protected virtual void OnDestroy()
         {
             if (_animatorDispatcher != null)
             {
@@ -314,7 +372,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <param name="customBlendInTime">自定义淡入时长（可选）</param>
         /// <param name="customBlendInCurve">自定义淡入曲线（可选）</param>
         /// <returns>主导图层对应的蒙太奇播放智能结构体句柄</returns>
-        public MontageHandle Play(
+        public virtual MontageHandle Play(
             MontageSequenceSO montage,
             float? customBlendInTime = null,
             AnimationCurve customBlendInCurve = null)
@@ -398,7 +456,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 获取指定通道当前正在播放的活跃蒙太奇句柄。
         /// </summary>
         /// <param name="channel">目标通道枚举</param>
-        public MontageHandle GetActiveHandle(MontageLayerChannel channel)
+        public virtual MontageHandle GetActiveHandle(MontageLayerChannel channel)
         {
             int index = (int)channel;
             return GetActiveHandle(index);
@@ -408,7 +466,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 获取指定图层索引当前正在播放的活跃蒙太奇句柄。
         /// </summary>
         /// <param name="layerIndex">图层索引（0: UpperBody, 1: FullBody, 2: Additive）</param>
-        public MontageHandle GetActiveHandle(int layerIndex = 1)
+        public virtual MontageHandle GetActiveHandle(int layerIndex = 1)
         {
             if (layerIndex < 0 || layerIndex >= _layerStates.Count) return MontageHandle.Invalid;
             var layer = _layerStates[layerIndex];
@@ -421,7 +479,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <summary>
         /// 查询指定通道当前是否正处于蒙太奇播放状态。
         /// </summary>
-        public bool IsPlayingChannel(MontageLayerChannel channel)
+        public virtual bool IsPlayingChannel(MontageLayerChannel channel)
         {
             return IsPlayingLayer((int)channel);
         }
@@ -430,7 +488,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 查询指定图层当前是否正处于蒙太奇播放状态。
         /// </summary>
         /// <param name="layerIndex">图层索引</param>
-        public bool IsPlayingLayer(int layerIndex)
+        public virtual bool IsPlayingLayer(int layerIndex)
         {
             if (layerIndex < 0 || layerIndex >= _layerStates.Count) return false;
             var layer = _layerStates[layerIndex];
@@ -442,7 +500,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <summary>
         /// 停止指定通道正在播放的蒙太奇。
         /// </summary>
-        public void StopChannel(MontageLayerChannel channel, float blendOutTime = 0.15f)
+        public virtual void StopChannel(MontageLayerChannel channel, float blendOutTime = 0.15f)
         {
             StopLayer((int)channel, blendOutTime);
         }
@@ -452,7 +510,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// </summary>
         /// <param name="layerIndex">图层索引</param>
         /// <param name="blendOutTime">淡出时间</param>
-        public void StopLayer(int layerIndex, float blendOutTime = 0.15f)
+        public virtual void StopLayer(int layerIndex, float blendOutTime = 0.15f)
         {
             if (layerIndex < 0 || layerIndex >= _layerStates.Count)
             {
@@ -475,7 +533,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 停止所有图层当前正在播放的蒙太奇。
         /// </summary>
         /// <param name="blendOutTime">淡出时间</param>
-        public void StopAll(float blendOutTime = 0.15f)
+        public virtual void StopAll(float blendOutTime = 0.15f)
         {
             for (int i = 0; i < _layerStates.Count; i++)
             {
@@ -488,7 +546,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// </summary>
         /// <param name="layerIndex">图层索引（0: UpperBody, 1: FullBody, 2: Additive）</param>
         /// <param name="weight">权重值 [0.0, 1.0]</param>
-        public void SetLayerWeight(int layerIndex, float weight)
+        public virtual void SetLayerWeight(int layerIndex, float weight)
         {
             if (layerIndex < 0 || layerIndex >= _layerStates.Count) return;
             _layerStates[layerIndex].LayerWeight = Mathf.Clamp01(weight);
@@ -498,7 +556,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 获取指定图层的运行时动态混合权重倍率。
         /// </summary>
         /// <param name="layerIndex">图层索引（0: UpperBody, 1: FullBody, 2: Additive）</param>
-        public float GetLayerWeight(int layerIndex)
+        public virtual float GetLayerWeight(int layerIndex)
         {
             if (layerIndex < 0 || layerIndex >= _layerStates.Count) return 1.0f;
             return _layerStates[layerIndex].LayerWeight;
@@ -508,8 +566,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 设置指定通道的运行时动态混合权重倍率 [0.0, 1.0]。
         /// </summary>
         /// <param name="channel">目标通道枚举</param>
-        /// <param name="weight">权重值 [0.0, 1.0]</param>
-        public void SetChannelWeight(MontageLayerChannel channel, float weight)
+        public virtual void SetChannelWeight(MontageLayerChannel channel, float weight)
         {
             SetLayerWeight((int)channel, weight);
         }
@@ -518,7 +575,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 获取指定通道的运行时动态混合权重倍率。
         /// </summary>
         /// <param name="channel">目标通道枚举</param>
-        public float GetChannelWeight(MontageLayerChannel channel)
+        public virtual float GetChannelWeight(MontageLayerChannel channel)
         {
             return GetLayerWeight((int)channel);
         }
@@ -527,7 +584,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 在运行时动态更换底层 Locomotion 状态机控制器。
         /// </summary>
         /// <param name="newController">新的 RuntimeAnimatorController 实例</param>
-        public void SetLocomotionAnimatorController(RuntimeAnimatorController newController)
+        public virtual void SetLocomotionAnimatorController(RuntimeAnimatorController newController)
         {
             if (newController == null)
             {
@@ -562,9 +619,45 @@ namespace Cwcbb.Tools.CwcMontage
         }
 
         /// <summary>
+        /// 允许外部 Playables 系统或第三方插件直接注入自定义 Playable 作为 0 号 Locomotion 基础层输入。
+        /// </summary>
+        /// <param name="customPlayable">自定义 Playable 节点</param>
+        /// <param name="outputPort">外部 Playable 的输出端口索引，默认为 0</param>
+        public virtual void SetLocomotionPlayable(Playable customPlayable, int outputPort = 0)
+        {
+            if (!customPlayable.IsValid())
+            {
+                Debug.LogWarning($"[MontageCoordinator] 物体 '{gameObject.name}' 传入的 customPlayable 无效，无法接入 Locomotion 插槽。");
+                return;
+            }
+
+            if (!_isGraphInitialized || !_playableGraph.IsValid())
+            {
+                return;
+            }
+
+            if (!customPlayable.GetGraph().Equals(_playableGraph))
+            {
+                Debug.LogError($"[MontageCoordinator] 物体 '{gameObject.name}' 传入的 customPlayable 属于外部 PlayableGraph，与本协调器的 PlayableGraph 不一致。Unity Playables 严禁跨图直接连接节点！请确保传入节点在本协调器的 Graph 中创建，或派生重写图拓扑初始化。", this);
+                return;
+            }
+
+            // 断开并销毁旧的 Locomotion Playable
+            _topLevelMixer.DisconnectInput(0);
+            if (_locomotionPlayable.IsValid())
+            {
+                _playableGraph.DestroyPlayable(_locomotionPlayable);
+            }
+
+            _locomotionPlayable = customPlayable;
+            _topLevelMixer.ConnectInput(0, _locomotionPlayable, outputPort);
+            _topLevelMixer.SetInputWeight(0, 1.0f);
+        }
+
+        /// <summary>
         /// 重置底层 Locomotion 为最初绑定的 Controller。
         /// </summary>
-        public void ResetLocomotionAnimatorController()
+        public virtual void ResetLocomotionAnimatorController()
         {
             if (_originalController != null)
             {
@@ -581,7 +674,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// </summary>
         /// <param name="targetBone">核心大骨骼枚举</param>
         /// <returns>目标骨骼 Transform，保底回退返回角色自身 transform</returns>
-        public Transform GetTargetBone(MontageTargetBone targetBone)
+        public virtual Transform GetTargetBone(MontageTargetBone targetBone)
         {
             int index = (int)targetBone;
             if (index >= 0 && index < _cachedBones.Length)
@@ -596,7 +689,7 @@ namespace Cwcbb.Tools.CwcMontage
 
         #region 初始化与图拓扑构建 (固定人形四层)
 
-        private void EnsureAnimator()
+        protected virtual void EnsureAnimator()
         {
             if (_animator != null)
             {
@@ -626,13 +719,22 @@ namespace Cwcbb.Tools.CwcMontage
             Debug.LogError($"[MontageCoordinator] 物体 '{gameObject.name}' 未显式配置 Animator，且在自身或第一层子物体中均未找到 Animator 组件！", this);
         }
 
-        private void SetupAnimatorBinding()
+        protected virtual void SetupAnimatorBinding()
         {
             if (_animator == null) return;
 
             _originalController = _animator.runtimeAnimatorController;
             MontageBoneUtility.ResolveBones(gameObject, _animator, _cachedBones);
 
+            SetupAnimatorDispatcher();
+        }
+
+        /// <summary>
+        /// 创建并绑定 Animator 的 Root Motion 采样分发器组件。
+        /// 派生类可重写此方法以定制或禁用 OnAnimatorMove 拦截（例如当外部宿主已具备 Root Motion 管线时）。
+        /// </summary>
+        protected virtual void SetupAnimatorDispatcher()
+        {
             _animatorDispatcher = _animator.GetComponent<MontageAnimatorDispatcher>();
             if (_animatorDispatcher == null)
             {
@@ -641,7 +743,53 @@ namespace Cwcbb.Tools.CwcMontage
             _animatorDispatcher.Bind(HandleAnimatorMove);
         }
 
-        private void InitializePlayableGraph()
+        /// <summary>
+        /// 创建并初始化 PlayableGraph 实例。派生类可重载此方法以复用外部宿主图（如 Animancer 等）。
+        /// </summary>
+        protected virtual PlayableGraph CreatePlayableGraph()
+        {
+            var graph = PlayableGraph.Create($"CwcMontage_{gameObject.name}");
+            graph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
+            return graph;
+        }
+
+        /// <summary>
+        /// 创建绑定目标 Animator 的动画输出节点。派生类若将本协调器作为图层挂载至外部混音器，可重载此方法返回 default 以避免抢占 Animator 输出通道。
+        /// </summary>
+        protected virtual PlayableOutput CreatePlayableOutput(PlayableGraph graph)
+        {
+            return AnimationPlayableOutput.Create(graph, "MontageOutput", _animator);
+        }
+
+        /// <summary>
+        /// 创建并配置底层 Locomotion 基础图层节点（Input 0）。
+        /// 派生类可重写此方法以接入外部状态机或第三方动画框架（如 Animancer 等）的输出节点。
+        /// </summary>
+        /// <param name="graph">当前 PlayableGraph 实例</param>
+        /// <returns>构建完成的 Locomotion 根 Playable 节点；若无基础层可返回 Playable.Null</returns>
+        protected virtual Playable CreateLocomotionPlayable(PlayableGraph graph)
+        {
+            if (_originalController != null)
+            {
+                var playable = AnimatorControllerPlayable.Create(graph, _originalController);
+                CheckSingleLayerControllerWarning();
+                return playable;
+            }
+
+            Debug.LogWarning($"[MontageCoordinator] 物体 '{gameObject.name}' 的 Animator 尚未分配 RuntimeAnimatorController，Locomotion 基础层输入为空。");
+            return Playable.Null;
+        }
+
+        /// <summary>
+        /// 获取 UpperBody 图层所使用的 AvatarMask 骨骼遮罩。
+        /// 派生类可重写此方法以自定义上半身遮罩。
+        /// </summary>
+        protected virtual AvatarMask GetUpperBodyMask()
+        {
+            return _customUpperBodyMask != null ? _customUpperBodyMask : MontageMaskUtility.GetOrCreateHumanoidUpperBodyMask();
+        }
+
+        protected virtual void InitializePlayableGraph()
         {
             if (_animator == null)
             {
@@ -649,10 +797,8 @@ namespace Cwcbb.Tools.CwcMontage
                 return;
             }
 
-            _playableGraph = PlayableGraph.Create($"CwcMontage_{gameObject.name}");
-            _playableGraph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
-
-            var playableOutput = AnimationPlayableOutput.Create(_playableGraph, "MontageOutput", _animator);
+            _playableGraph = CreatePlayableGraph();
+            var playableOutput = CreatePlayableOutput(_playableGraph);
 
             // 固定四层拓扑：
             // Input 0: Locomotion (基础状态机)
@@ -661,20 +807,14 @@ namespace Cwcbb.Tools.CwcMontage
             // Input 3: Additive (受击/抖动叠加，Additive = true)
             _topLevelMixer = AnimationLayerMixerPlayable.Create(_playableGraph, 4);
 
-            _animator.runtimeAnimatorController = null;
-            _animator.applyRootMotion = true;
-
-            if (_originalController != null)
+            _locomotionPlayable = CreateLocomotionPlayable(_playableGraph);
+            if (_locomotionPlayable.IsValid())
             {
-                _locomotionPlayable = AnimatorControllerPlayable.Create(_playableGraph, _originalController);
                 _topLevelMixer.ConnectInput(0, _locomotionPlayable, 0);
                 _topLevelMixer.SetInputWeight(0, 1.0f);
-                CheckSingleLayerControllerWarning();
             }
             else
             {
-                Debug.LogWarning($"[MontageCoordinator] 物体 '{gameObject.name}' 的 Animator 尚未分配 RuntimeAnimatorController，Locomotion 基础层输入为空。");
-                _locomotionPlayable = default;
                 _topLevelMixer.SetInputWeight(0, 0.0f);
             }
 
@@ -682,7 +822,7 @@ namespace Cwcbb.Tools.CwcMontage
 
             // 1. UpperBody (Layer 0, Top Input 1)
             var upperLayer = CreateLayerState(MontageLayerChannel.UpperBody, 0, 1);
-            var upperMask = _customUpperBodyMask != null ? _customUpperBodyMask : MontageMaskUtility.GetOrCreateHumanoidUpperBodyMask();
+            var upperMask = GetUpperBodyMask();
             _topLevelMixer.SetLayerMaskFromAvatarMask(1, upperMask);
             _topLevelMixer.SetLayerAdditive(1, false);
             _layerStates.Add(upperLayer);
@@ -697,12 +837,17 @@ namespace Cwcbb.Tools.CwcMontage
             _topLevelMixer.SetLayerAdditive(3, true);
             _layerStates.Add(addLayer);
 
-            playableOutput.SetSourcePlayable(_topLevelMixer);
+            if (playableOutput.IsOutputValid())
+            {
+                _animator.runtimeAnimatorController = null;
+                _animator.applyRootMotion = true;
+                playableOutput.SetSourcePlayable(_topLevelMixer);
+            }
             _playableGraph.Play();
             _isGraphInitialized = true;
         }
 
-        private LayerRuntimeState CreateLayerState(MontageLayerChannel channel, int layerIndex, int topInputIndex)
+        protected virtual LayerRuntimeState CreateLayerState(MontageLayerChannel channel, int layerIndex, int topInputIndex)
         {
             var state = new LayerRuntimeState(channel, layerIndex, topInputIndex);
             var layerMixer = AnimationMixerPlayable.Create(_playableGraph, 2);
@@ -713,27 +858,87 @@ namespace Cwcbb.Tools.CwcMontage
             return state;
         }
 
-        private void CleanupPlayableGraph()
+        protected virtual void CleanupPlayableGraph()
+        {
+            DestroyInternalPlayables();
+            DestroyPlayableGraph();
+            _isGraphInitialized = false;
+        }
+
+        /// <summary>
+        /// 断开并销毁所有由本协调器在 PlayableGraph 中创建的内部子 Playable 节点（Mixer、Slot 与 Locomotion 等）。
+        /// 确保无论是由本协调器销毁整个图，还是复用外部共享图（如 Animancer）时，均不会发生节点内存与端口泄露。
+        /// </summary>
+        protected virtual void DestroyInternalPlayables()
+        {
+            if (!_playableGraph.IsValid())
+            {
+                return;
+            }
+
+            for (int i = 0; i < _layerStates.Count; i++)
+            {
+                var layer = _layerStates[i];
+                layer.Slot0.DestroyPlayables(_playableGraph, layer.LayerMixer);
+                layer.Slot1.DestroyPlayables(_playableGraph, layer.LayerMixer);
+
+                if (layer.LayerMixer.IsValid())
+                {
+                    if (_topLevelMixer.IsValid())
+                    {
+                        _topLevelMixer.DisconnectInput(layer.TopLevelInputIndex);
+                    }
+                    _playableGraph.DestroyPlayable(layer.LayerMixer);
+                    layer.LayerMixer = default;
+                }
+            }
+            _layerStates.Clear();
+
+            if (_topLevelMixer.IsValid())
+            {
+                _topLevelMixer.DisconnectInput(0);
+            }
+
+            if (_locomotionPlayable.IsValid())
+            {
+                _playableGraph.DestroyPlayable(_locomotionPlayable);
+                _locomotionPlayable = default;
+            }
+
+            if (_topLevelMixer.IsValid())
+            {
+                _playableGraph.DestroyPlayable(_topLevelMixer);
+                _topLevelMixer = default;
+            }
+        }
+
+        /// <summary>
+        /// 销毁运行时使用的 PlayableGraph 实例。
+        /// 派生类若复用了外部宿主 Graph（如 Animancer），可重写此方法仅置空或注销监听，而不销毁宿主图。
+        /// </summary>
+        protected virtual void DestroyPlayableGraph()
         {
             if (_playableGraph.IsValid())
             {
                 _playableGraph.Destroy();
                 _playableGraph = default;
             }
-
-            _isGraphInitialized = false;
         }
 
-        private void CheckSingleLayerControllerWarning()
+        protected virtual void CheckSingleLayerControllerWarning()
         {
-            if (_animator != null && _animator.isHuman && _locomotionPlayable.IsValid() && _locomotionPlayable.GetLayerCount() <= 1)
+            if (_animator != null && _animator.isHuman && _locomotionPlayable.IsValid() && _locomotionPlayable.IsPlayableOfType<AnimatorControllerPlayable>())
             {
-                string controllerName = _originalController != null ? _originalController.name : "Unknown";
-                Debug.LogWarning(
-                    $"[MontageCoordinator] 角色 '{gameObject.name}' 绑定的动画器控制器 '{controllerName}' 仅包含 1 个图层 (Base Layer)。\n" +
-                    "【Unity 原生已知缺陷警告】：Unity 原生 Humanoid 求解器在与 Playables 层混音器结合时，若底层控制器只有单层，会自动触发单层质心重定向 (Mass Center Retargeting) 计算，导致播放上半身蒙太奇时底层角色的骨盆 (Hips) 与身体朝向产生异常扭曲偏转。\n" +
-                    "【推荐修复方案】：请在 '{controllerName}' 中添加一个空的图层 (如命名为 'EmptyLayer'，权重设为 0 即可)。当控制器层数 >= 2 时，Unity 会自动切换到标准多层管线，彻底消除该偏转现象。",
-                    this);
+                var acp = (AnimatorControllerPlayable)_locomotionPlayable;
+                if (acp.GetLayerCount() <= 1)
+                {
+                    string controllerName = _originalController != null ? _originalController.name : "Unknown";
+                    Debug.LogWarning(
+                        $"[MontageCoordinator] 角色 '{gameObject.name}' 绑定的动画器控制器 '{controllerName}' 仅包含 1 个图层 (Base Layer)。\n" +
+                        "【Unity 原生已知缺陷警告】：Unity 原生 Humanoid 求解器在与 Playables 层混音器结合时，若底层控制器只有单层，会自动触发单层质心重定向 (Mass Center Retargeting) 计算，导致播放上半身蒙太奇时底层角色的骨盆 (Hips) 与身体朝向产生异常扭曲偏转。\n" +
+                        "【推荐修复方案】：请在 '{controllerName}' 中添加一个空的图层 (如命名为 'EmptyLayer'，权重设为 0 即可)。当控制器层数 >= 2 时，Unity 会自动切换到标准多层管线，彻底消除该偏转现象。",
+                        this);
+                }
             }
         }
 
@@ -741,7 +946,7 @@ namespace Cwcbb.Tools.CwcMontage
 
         #region 插槽配置与多通道分发辅助
 
-        private void StopActiveSlot(LayerRuntimeState layer, float blendOutDuration)
+        protected virtual void StopActiveSlot(LayerRuntimeState layer, float blendOutDuration)
         {
             if (layer.ActiveSlotIndex < 0) return;
             var slot = (layer.ActiveSlotIndex == 0) ? layer.Slot0 : layer.Slot1;
@@ -751,7 +956,7 @@ namespace Cwcbb.Tools.CwcMontage
             }
         }
 
-        private MontageHandle SetupLayerSlot(
+        protected virtual MontageHandle SetupLayerSlot(
             LayerRuntimeState layerState,
             List<MontageAnimationSegment> segments,
             MontagePlayer player,
@@ -822,7 +1027,7 @@ namespace Cwcbb.Tools.CwcMontage
 
         #region 图更新与通道动态混音计算 (空白区自然释放)
 
-        private void UpdateLayers(float deltaTime)
+        protected virtual void UpdateLayers(float deltaTime)
         {
             // 1. 收集并统一推进所有活跃 Player 的单一权威时钟与动作块扫掠（确保多通道共用时钟只推进一次）
             _tickablePlayers.Clear();
@@ -907,7 +1112,7 @@ namespace Cwcbb.Tools.CwcMontage
             }
         }
 
-        private void UpdateSlotClips(LayerRuntimeState layer, SlotState slot)
+        protected virtual void UpdateSlotClips(LayerRuntimeState layer, SlotState slot)
         {
             if (!slot.IsOccupied)
             {
@@ -962,7 +1167,7 @@ namespace Cwcbb.Tools.CwcMontage
             }
         }
 
-        private void CheckAndReleaseSlot(SlotState slot, AnimationMixerPlayable mixer)
+        protected virtual void CheckAndReleaseSlot(SlotState slot, AnimationMixerPlayable mixer)
         {
             if (!slot.IsOccupied) return;
 
@@ -980,7 +1185,7 @@ namespace Cwcbb.Tools.CwcMontage
             }
         }
 
-        private bool IsPlayerOccupiedByAnySlot(MontagePlayer player)
+        protected virtual bool IsPlayerOccupiedByAnySlot(MontagePlayer player)
         {
             for (int i = 0; i < _layerStates.Count; i++)
             {
@@ -993,7 +1198,7 @@ namespace Cwcbb.Tools.CwcMontage
             return false;
         }
 
-        private MontagePlayer GetOrCreatePlayer()
+        protected virtual MontagePlayer GetOrCreatePlayer()
         {
             for (int i = 0; i < _playerPool.Count; i++)
             {
@@ -1004,19 +1209,28 @@ namespace Cwcbb.Tools.CwcMontage
                 }
             }
 
-            var newPlayer = new MontagePlayer(gameObject, _animator, isPreview: false, coordinator: this);
+            var newPlayer = CreatePlayerInstance();
             _playerPool.Add(newPlayer);
             return newPlayer;
         }
 
-        private void ReleasePlayer(MontagePlayer player)
+        /// <summary>
+        /// 构造新的蒙太奇播放器实例。
+        /// 派生类可重写此方法以实例化自定义的派生 MontagePlayer。
+        /// </summary>
+        protected virtual MontagePlayer CreatePlayerInstance()
+        {
+            return new MontagePlayer(gameObject, _animator, isPreview: false, coordinator: this);
+        }
+
+        protected virtual void ReleasePlayer(MontagePlayer player)
         {
             if (player == null) return;
             _activePlayers.Remove(player);
             player.Reset();
         }
 
-        private void ApplyUpperBodySpineDecoupling()
+        protected virtual void ApplyUpperBodySpineDecoupling()
         {
             if (_animator == null || !_animator.isHuman || _layerStates.Count <= 0) return;
 
@@ -1155,7 +1369,7 @@ namespace Cwcbb.Tools.CwcMontage
 
         #region Root Motion 采样与解耦分发
 
-        private void HandleAnimatorMove(Vector3 deltaPosition, Quaternion deltaRotation)
+        protected virtual void HandleAnimatorMove(Vector3 deltaPosition, Quaternion deltaRotation)
         {
             // FullBody (Layer 1) 拥有对 Root Motion 的最高主导权
             var fullBodyLayer = _layerStates.Count > 1 ? _layerStates[1] : null;
@@ -1228,7 +1442,7 @@ namespace Cwcbb.Tools.CwcMontage
 
         #region 内部事件监听处理
 
-        private void HandleSectionEntered(MontagePlayer player, int sectionIndex)
+        protected virtual void HandleSectionEntered(MontagePlayer player, int sectionIndex)
         {
             if (TryGetHandleForPlayer(player, out var handle))
             {
@@ -1236,7 +1450,7 @@ namespace Cwcbb.Tools.CwcMontage
             }
         }
 
-        private void HandlePlayerEnded(MontagePlayer player)
+        protected virtual void HandlePlayerEnded(MontagePlayer player)
         {
             if (TryGetHandleForPlayer(player, out var handle))
             {
@@ -1246,7 +1460,7 @@ namespace Cwcbb.Tools.CwcMontage
             UnbindPlayerEvents(player);
         }
 
-        private void UnbindPlayerEvents(MontagePlayer player)
+        protected virtual void UnbindPlayerEvents(MontagePlayer player)
         {
             if (player == null) return;
 
@@ -1255,7 +1469,7 @@ namespace Cwcbb.Tools.CwcMontage
             player.OnInterrupted -= HandlePlayerEnded;
         }
 
-        private bool TryGetHandleForPlayer(MontagePlayer player, out MontageHandle handle)
+        protected virtual bool TryGetHandleForPlayer(MontagePlayer player, out MontageHandle handle)
         {
             if (player == null)
             {
@@ -1286,7 +1500,7 @@ namespace Cwcbb.Tools.CwcMontage
 
         #region 句柄安全分发与代际校验 (Handle Dispatchers)
 
-        private bool TryGetValidPlayer(int layerIndex, int slotIndex, int generation, out MontagePlayer player)
+        protected virtual bool TryGetValidPlayer(int layerIndex, int slotIndex, int generation, out MontagePlayer player)
         {
             player = null;
             if (layerIndex < 0 || layerIndex >= _layerStates.Count) return false;
@@ -1303,7 +1517,7 @@ namespace Cwcbb.Tools.CwcMontage
             return true;
         }
 
-        private bool TryGetSlotPlayer(int layerIndex, int slotIndex, int generation, out MontagePlayer player)
+        protected virtual bool TryGetSlotPlayer(int layerIndex, int slotIndex, int generation, out MontagePlayer player)
         {
             player = null;
             if (layerIndex < 0 || layerIndex >= _layerStates.Count) return false;

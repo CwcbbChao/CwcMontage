@@ -5,6 +5,16 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.1] - 2026-10-03
+
+### Added
+- **Open-Closed Principle Virtual Hook Architecture**: Refactored core methods and lifecycle in `MontageCoordinator`, `MontagePlayer`, and `MontageAnimatorDispatcher` to `virtual` / `protected virtual`, enabling seamless inheritance and customization without modifying source code.
+- **Third-Party Playables Framework Extensibility**: Added protected overridable factory and lifecycle hooks (`CreatePlayableGraph`, `CreatePlayableOutput`, `CreateLocomotionPlayable`, `DestroyPlayableGraph`, `DestroyInternalPlayables`, `ShouldEvaluateGraph`) to support non-intrusive integration with external animation pipelines (such as Animancer).
+- **Non-blocking Handle Dispatchers**: Upgraded handle query and dispatch methods to protected virtual, empowering subclasses to override slot validation and layer resolution.
+
+### Changed
+- **Protected Member Visibility**: Relaxed non-serialized fields and internal helpers from `private` to `protected`, allowing derived classes full visibility over player state machines, layer runtime structures, and dispatchers.
+
 ## [1.2.0] - 2026-09-26
 
 ### Added

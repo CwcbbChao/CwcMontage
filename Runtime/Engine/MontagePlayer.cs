@@ -31,38 +31,38 @@ namespace Cwcbb.Tools.CwcMontage
     /// </summary>
     public class MontagePlayer
     {
-        #region 私有字段
+        #region 保护与私有字段
 
-        private MontageSequenceSO _sourceAsset;
-        private readonly GameObject _targetObject;
-        private readonly Animator _targetAnimator;
-        private readonly MontageCoordinator _coordinator;
-        private readonly bool _isPreview;
+        protected MontageSequenceSO _sourceAsset;
+        protected readonly GameObject _targetObject;
+        protected readonly Animator _targetAnimator;
+        protected readonly MontageCoordinator _coordinator;
+        protected readonly bool _isPreview;
 
-        private IMontageBlockState[] _states = new IMontageBlockState[8];
-        private readonly HashSet<int> _activeBlockIndices = new(8);
-        private int _configuredBlockCount;
+        protected IMontageBlockState[] _states = new IMontageBlockState[8];
+        protected readonly HashSet<int> _activeBlockIndices = new(8);
+        protected int _configuredBlockCount;
 
-        private readonly Dictionary<int, float> _sectionRates = new();
+        protected readonly Dictionary<int, float> _sectionRates = new();
 
-        private MontagePlayerState _state = MontagePlayerState.Playing;
-        private float _elapsedTime;
-        private float _lastElapsedTime;
-        private float _playbackRate = 1.0f;
-        private float _currentWeight;
-        private float _weightAtStop = 1.0f;
-        private float _customWeightMultiplier = 1.0f;
+        protected MontagePlayerState _state = MontagePlayerState.Playing;
+        protected float _elapsedTime;
+        protected float _lastElapsedTime;
+        protected float _playbackRate = 1.0f;
+        protected float _currentWeight;
+        protected float _weightAtStop = 1.0f;
+        protected float _customWeightMultiplier = 1.0f;
 
-        private float _blendInTime;
-        private AnimationCurve _blendInCurve;
-        private float _blendOutTime;
-        private AnimationCurve _blendOutCurve;
-        private float _currentBlendInTime;
-        private float _currentBlendOutTime;
+        protected float _blendInTime;
+        protected AnimationCurve _blendInCurve;
+        protected float _blendOutTime;
+        protected AnimationCurve _blendOutCurve;
+        protected float _currentBlendInTime;
+        protected float _currentBlendOutTime;
 
-        private int _currentSectionIndex;
+        protected int _currentSectionIndex;
 
-        private bool _isPaused;
+        protected bool _isPaused;
 
         #endregion
 
@@ -263,7 +263,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <summary>
         /// 原地启动/重置播放指定的蒙太奇配置（0 GC Alloc）。
         /// </summary>
-        public void Play(
+        public virtual void Play(
             MontageSequenceSO asset,
             float? customBlendInTime = null,
             AnimationCurve customBlendInCurve = null)
@@ -325,7 +325,7 @@ namespace Cwcbb.Tools.CwcMontage
             }
         }
 
-        private void ResetStates()
+        protected virtual void ResetStates()
         {
             if (_sourceAsset == null) return;
             var blocks = _sourceAsset.BakedRuntimeActionBlocks;
@@ -355,7 +355,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 驱动权威时间轴步进、淡入淡出计算、分段切换与原子化区间扫掠生命周期分发。
         /// </summary>
         /// <param name="deltaTime">时间步长（秒）</param>
-        internal void Tick(float deltaTime)
+        protected internal virtual void Tick(float deltaTime)
         {
             if (_state == MontagePlayerState.Finished || _isPaused)
             {
@@ -469,7 +469,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <param name="fromTime">区间起点时间戳（秒，开区间）</param>
         /// <param name="toTime">区间终点时间戳（秒，闭区间）</param>
         /// <param name="effectiveDelta">当前帧有效时间步长</param>
-        internal void SweepInterval(float fromTime, float toTime, float effectiveDelta)
+        protected internal virtual void SweepInterval(float fromTime, float toTime, float effectiveDelta)
         {
             if (_sourceAsset == null) return;
 
@@ -538,7 +538,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 严格遵循连续动力学权重模型，打断时以打断瞬间实际瞬时权重为起点平滑衰减。
         /// </summary>
         /// <returns>单槽连续目标权重</returns>
-        internal float CalculateTargetWeight()
+        protected internal virtual float CalculateTargetWeight()
         {
             if (_sourceAsset == null || _state == MontagePlayerState.Finished)
             {
@@ -583,7 +583,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <summary>
         /// 动态设置外部自定义播放权重倍率 [0.0, 1.0]。
         /// </summary>
-        public void SetCustomWeight(float weight)
+        public virtual void SetCustomWeight(float weight)
         {
             _customWeightMultiplier = Mathf.Clamp01(weight);
         }
@@ -593,7 +593,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// </summary>
         /// <param name="sectionIndex">物理分段索引（从 0 开始）</param>
         /// <param name="targetDuration">期望该分段在游戏中持续的真实秒数</param>
-        public void SyncSectionDuration(int sectionIndex, float targetDuration)
+        public virtual void SyncSectionDuration(int sectionIndex, float targetDuration)
         {
             if (_state != MontagePlayerState.Playing)
             {
@@ -623,7 +623,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 自适应分段时钟对齐。
         /// 设置指定物理分段的目标物理时长，可选择是否立即跳转至该分段起点。
         /// </summary>
-        public void SyncSection(int sectionIndex, float targetDuration, bool jumpImmediately = false)
+        public virtual void SyncSection(int sectionIndex, float targetDuration, bool jumpImmediately = false)
         {
             if (_state != MontagePlayerState.Playing)
             {
@@ -642,7 +642,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 清除指定分段的自定义速率配置，使其恢复为资产基础速率。
         /// </summary>
         /// <param name="sectionIndex">分段索引</param>
-        public void ClearSectionSync(int sectionIndex)
+        public virtual void ClearSectionSync(int sectionIndex)
         {
             if (_state != MontagePlayerState.Playing)
             {
@@ -660,7 +660,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 瞬间跳转到指定分段的起始时间点。
         /// </summary>
         /// <param name="sectionIndex">物理分段索引（从 0 开始）</param>
-        public void JumpToSection(int sectionIndex)
+        public virtual void JumpToSection(int sectionIndex)
         {
             if (_state != MontagePlayerState.Playing)
             {
@@ -675,7 +675,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 瞬间跳转到指定的绝对时间戳（秒），并自动完成动作块状态的原子对齐与退出/激活。
         /// </summary>
         /// <param name="targetTime">目标时间戳（秒）</param>
-        public void JumpToTime(float targetTime)
+        public virtual void JumpToTime(float targetTime)
         {
             if (_state != MontagePlayerState.Playing)
             {
@@ -734,7 +734,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 逻辑归一化进度绝对驱动采样。
         /// 将指定分段的归一化进度 [0.0, 1.0] 映射为物理时间并执行瞬间跳转。
         /// </summary>
-        public void EvaluateSectionProgress(int sectionIndex, float progress)
+        public virtual void EvaluateSectionProgress(int sectionIndex, float progress)
         {
             if (_state != MontagePlayerState.Playing)
             {
@@ -750,7 +750,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <summary>
         /// 逻辑归一化进度绝对驱动采样（兼容别名）。
         /// </summary>
-        public void EvaluateSectionAtProgress(int sectionIndex, float progress) => EvaluateSectionProgress(sectionIndex, progress);
+        public virtual void EvaluateSectionAtProgress(int sectionIndex, float progress) => EvaluateSectionProgress(sectionIndex, progress);
 
         /// <summary>
         /// 评估当前权威时间戳下各动画片段在混音器中的采样时间与归一化混合权重（零 GC 分配）。
@@ -759,7 +759,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <param name="outIndices">输出活跃片段索引</param>
         /// <param name="outSampleTimes">输出片段内部采样时间（秒）</param>
         /// <param name="outWeights">输出归一化权重 [0.0, 1.0]</param>
-        public void EvaluateAnimationSegments(
+        public virtual void EvaluateAnimationSegments(
             List<int> outIndices,
             List<float> outSampleTimes,
             List<float> outWeights)
@@ -775,7 +775,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 评估指定通道的动画片段（支持 UpperBody、FullBody、Additive）。
         /// 零 GC 内存分配。
         /// </summary>
-        public void EvaluateChannelSegments(
+        public virtual void EvaluateChannelSegments(
             MontageLayerChannel channel,
             List<int> outIndices,
             List<float> outSampleTimes,
@@ -791,7 +791,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <summary>
         /// 设置全局播放速率倍率。
         /// </summary>
-        public void SetPlaybackRate(float rate)
+        public virtual void SetPlaybackRate(float rate)
         {
             if (_state != MontagePlayerState.Playing)
             {
@@ -804,7 +804,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <summary>
         /// 暂停或恢复播放。
         /// </summary>
-        public void SetPaused(bool isPaused)
+        public virtual void SetPaused(bool isPaused)
         {
             if (_state != MontagePlayerState.Playing)
             {
@@ -817,7 +817,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <summary>
         /// 设置当前在混音器中的计算权重（由 MontageCoordinator 依据 Dominant 混音拓扑设置）。
         /// </summary>
-        internal void SetCurrentWeight(float weight)
+        protected internal virtual void SetCurrentWeight(float weight)
         {
             _currentWeight = Mathf.Clamp01(weight);
         }
@@ -826,7 +826,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// 外部主动打断停止该蒙太奇播放，进入淡出阶段并安全退出所有活跃动作块。
         /// </summary>
         /// <param name="customBlendOutTime">自定义淡出时长（若为空使用资产默认配置）</param>
-        public void Stop(float? customBlendOutTime = null)
+        public virtual void Stop(float? customBlendOutTime = null)
         {
             if (_state != MontagePlayerState.Playing) return;
 
@@ -845,7 +845,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <summary>
         /// 彻底终止播放并立即标记为已完成，确保所有活跃动作块百分之百安全退出。
         /// </summary>
-        internal void Terminate()
+        protected internal virtual void Terminate()
         {
             if (_state == MontagePlayerState.Finished) return;
 
@@ -863,9 +863,9 @@ namespace Cwcbb.Tools.CwcMontage
 
         #endregion
 
-        #region 私有辅助方法
+        #region 内部辅助方法
 
-        private void HandleSectionTransitions(int fromSection, int toSection)
+        protected virtual void HandleSectionTransitions(int fromSection, int toSection)
         {
             if (fromSection < toSection)
             {
@@ -887,7 +887,7 @@ namespace Cwcbb.Tools.CwcMontage
             }
         }
 
-        private void UpdateSectionPlaybackRate(int sectionIndex)
+        protected virtual void UpdateSectionPlaybackRate(int sectionIndex)
         {
             if (_sectionRates.TryGetValue(sectionIndex, out float customRate))
             {
@@ -899,7 +899,7 @@ namespace Cwcbb.Tools.CwcMontage
             }
         }
 
-        private void CompleteNaturalFinish(in MontageActionContext context)
+        protected virtual void CompleteNaturalFinish(in MontageActionContext context)
         {
             if (_state != MontagePlayerState.Playing) return;
 
@@ -912,7 +912,7 @@ namespace Cwcbb.Tools.CwcMontage
         /// <summary>
         /// 彻底终止播放并清理所有状态与已绑定的委托，将状态实例归还至对象池（供微型池回池复用）。
         /// </summary>
-        public void Reset()
+        public virtual void Reset()
         {
             ResetStates();
             _sourceAsset = null;
@@ -930,7 +930,7 @@ namespace Cwcbb.Tools.CwcMontage
             OnSectionEntered = null;
         }
 
-        private void ExitAllActiveBlocks(in MontageActionContext context)
+        protected virtual void ExitAllActiveBlocks(in MontageActionContext context)
         {
             if (_activeBlockIndices.Count == 0 || _sourceAsset == null) return;
 
@@ -951,7 +951,7 @@ namespace Cwcbb.Tools.CwcMontage
             _activeBlockIndices.Clear();
         }
 
-        private MontageActionContext CreateCurrentContext()
+        protected virtual MontageActionContext CreateCurrentContext()
         {
             float total = TotalDuration;
             float normProgress = total > 0.0001f ? Mathf.Clamp01(_elapsedTime / total) : 0f;

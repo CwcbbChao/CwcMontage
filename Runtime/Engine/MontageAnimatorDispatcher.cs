@@ -13,20 +13,32 @@ namespace Cwcbb.Tools.CwcMontage
     [AddComponentMenu("")]
     public class MontageAnimatorDispatcher : MonoBehaviour
     {
-        #region 私有字段
+        #region 保护与私有字段
 
-        private Action<Vector3, Quaternion> _onAnimatorMoveCallback;
+        protected Animator _animator;
+        protected Action<Vector3, Quaternion> _onAnimatorMoveCallback;
 
         #endregion
 
         #region Unity 生命周期
 
-        private void OnAnimatorMove()
+        protected virtual void Awake()
         {
-            var animator = GetComponent<Animator>();
-            if (animator == null) return;
+            if (_animator == null)
+            {
+                _animator = GetComponent<Animator>();
+            }
+        }
 
-            _onAnimatorMoveCallback?.Invoke(animator.deltaPosition, animator.deltaRotation);
+        protected virtual void OnAnimatorMove()
+        {
+            if (_animator == null)
+            {
+                _animator = GetComponent<Animator>();
+                if (_animator == null) return;
+            }
+
+            _onAnimatorMoveCallback?.Invoke(_animator.deltaPosition, _animator.deltaRotation);
         }
 
         #endregion
@@ -37,15 +49,19 @@ namespace Cwcbb.Tools.CwcMontage
         /// 绑定来自 MontageCoordinator 的根运动处理委托。
         /// </summary>
         /// <param name="callback">接收 (deltaPosition, deltaRotation) 的回调方法</param>
-        public void Bind(Action<Vector3, Quaternion> callback)
+        public virtual void Bind(Action<Vector3, Quaternion> callback)
         {
+            if (_animator == null)
+            {
+                _animator = GetComponent<Animator>();
+            }
             _onAnimatorMoveCallback = callback;
         }
 
         /// <summary>
         /// 解绑根运动处理委托。
         /// </summary>
-        public void Unbind()
+        public virtual void Unbind()
         {
             _onAnimatorMoveCallback = null;
         }
