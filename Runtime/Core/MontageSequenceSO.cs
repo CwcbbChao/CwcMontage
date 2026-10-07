@@ -43,6 +43,18 @@ namespace Cwcbb.Tools.CwcMontage
         [Tooltip("是否启用上半身脊柱（Spine）朝向补偿。消除跑步时骨盆晃动对上半身出招朝向的偏转污染。")]
         [SerializeField] private bool _decoupleUpperBodyOrientation = true;
 
+        [Tooltip("该蒙太奇专属绑定的上半身遮罩 AvatarMask（可选，留空则沿用通用标准遮罩）。")]
+        [SerializeField] private AvatarMask _customUpperBodyMask;
+
+#if UNITY_EDITOR
+        [Header("Editor Preview Settings")]
+        [Tooltip("是否在此蒙太奇资产中启用专属独立预览模型（关闭时使用编辑器全局偏好模型）。")]
+        [SerializeField] private bool _overridePreviewModel;
+
+        [Tooltip("该蒙太奇专属绑定的独立预览模型 Prefab（例如专属泛型怪物或特定英雄）。")]
+        [SerializeField] private GameObject _previewModel;
+#endif
+
         [HideInInspector]
         [SerializeField] private int _animationLayer = 0;
 
@@ -122,6 +134,35 @@ namespace Cwcbb.Tools.CwcMontage
             get => _decoupleUpperBodyOrientation;
             set => _decoupleUpperBodyOrientation = value;
         }
+
+        /// <summary>
+        /// 该蒙太奇专属绑定的上半身遮罩（可选）。
+        /// </summary>
+        public AvatarMask CustomUpperBodyMask
+        {
+            get => _customUpperBodyMask;
+            set => _customUpperBodyMask = value;
+        }
+
+#if UNITY_EDITOR
+        /// <summary>
+        /// 是否在此蒙太奇资产中启用专属独立预览模型。
+        /// </summary>
+        public bool OverridePreviewModel
+        {
+            get => _overridePreviewModel;
+            set => _overridePreviewModel = value;
+        }
+
+        /// <summary>
+        /// 该蒙太奇专属绑定的独立预览模型 Prefab。
+        /// </summary>
+        public GameObject PreviewModel
+        {
+            get => _previewModel;
+            set => _previewModel = value;
+        }
+#endif
 
         /// <summary>
         /// 上半身动画片段列表。
@@ -455,6 +496,39 @@ namespace Cwcbb.Tools.CwcMontage
         #endregion
 
         #region 公共方法 (分段与物理时间计算)
+
+        /// <summary>
+        /// 获取首个有效动画片段的骨骼类型是否为人行（Humanoid）。
+        /// 若无任何有效片段则返回 null。
+        /// </summary>
+        public bool? GetAnchorSkeletonIsHuman()
+        {
+            if (_animationSegments != null)
+            {
+                for (int i = 0; i < _animationSegments.Count; i++)
+                {
+                    var clip = _animationSegments[i]?.Clip;
+                    if (clip != null) return clip.isHumanMotion;
+                }
+            }
+            if (_upperBodySegments != null)
+            {
+                for (int i = 0; i < _upperBodySegments.Count; i++)
+                {
+                    var clip = _upperBodySegments[i]?.Clip;
+                    if (clip != null) return clip.isHumanMotion;
+                }
+            }
+            if (_additiveSegments != null)
+            {
+                for (int i = 0; i < _additiveSegments.Count; i++)
+                {
+                    var clip = _additiveSegments[i]?.Clip;
+                    if (clip != null) return clip.isHumanMotion;
+                }
+            }
+            return null;
+        }
 
         /// <summary>
         /// 使缓存的扁平运行时动作块列表失效并在下次访问时重新烘焙。

@@ -34,11 +34,20 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private readonly List<Renderer> _cachedRenderers = new();
 
+        private Button _previewMenuBtn;
+        private VisualElement _previewSettingsPanel;
+        private Toggle _overrideModelToggle;
         private ObjectField _modelObjectField;
         private ObjectField _baseMotionObjectField;
-        private Button _rootMotionBtn;
-        private Button _footIKBtn;
-        private Button _toggleUnlitBtn;
+        private ObjectField _upperBodyMaskObjectField;
+
+        private Button _viewMenuBtn;
+        private VisualElement _viewSettingsPanel;
+        private Toggle _rootMotionToggle;
+        private Toggle _footIKToggle;
+        private Toggle _gridToggle;
+        private Toggle _litToggle;
+
         private Mesh _gridMesh;
         private Material _gridMaterial;
         private bool _showGroundGrid = true;
@@ -57,6 +66,16 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         /// 当用户在视口中切换或拖入新的底层循环动作（Base Locomotion Motion）时触发。
         /// </summary>
         public event Action<AnimationClip> OnPreviewBaseMotionChanged;
+
+        /// <summary>
+        /// 当用户在视口高级设置中切换或指定新的自定义上半身遮罩（UpperBody Mask）时触发。
+        /// </summary>
+        public event Action<AvatarMask> OnPreviewUpperBodyMaskChanged;
+
+        /// <summary>
+        /// 当用户切换是否使用独立资产预览模型绑定（Override Preview Model）时触发。
+        /// </summary>
+        public event Action<bool> OnOverrideModelToggled;
 
         /// <summary>
         /// 当用户切换预览根运动（Root Motion）时触发。
@@ -91,95 +110,34 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _previewImage.tooltip = "Right Click + Drag: Rotate Camera\nRight Click + WASD: FPS Fly Camera\nMiddle Click + Drag: Pan Camera\nScroll: Zoom";
             Add(_previewImage);
 
-            // 右上角覆盖快捷工具条
+            // 右上角覆盖快捷工具条（双折叠下拉卡片架构）
             var overlayBar = new VisualElement();
             overlayBar.AddToClassList("montage-viewport-overlay");
 
-            // 1. 预览模型快捷选择框
-            var modelBox = new VisualElement();
-            modelBox.AddToClassList("montage-overlay-model-box");
+            // 1. 预览资产折叠菜单 (Model, Base Motion, UpperBody Mask, Override)
+            _previewMenuBtn = new Button(TogglePreviewSettingsPanel) { text = "Preview ▾" };
+            _previewMenuBtn.AddToClassList("montage-overlay-btn");
+            _previewMenuBtn.tooltip = "Preview Assets (Model, Base Motion, UpperBody Mask, Asset Override)";
+            overlayBar.Add(_previewMenuBtn);
 
-            var modelLbl = new Label("Model");
-            modelLbl.AddToClassList("montage-overlay-model-label");
-            modelBox.Add(modelLbl);
+            var separator = new VisualElement();
+            separator.AddToClassList("montage-overlay-separator");
+            overlayBar.Add(separator);
 
-            _modelObjectField = new ObjectField
-            {
-                objectType = typeof(GameObject),
-                allowSceneObjects = false
-            };
-            _modelObjectField.AddToClassList("montage-overlay-model-field");
-            _modelObjectField.tooltip = "Preview Model Prefab (Stored in EditorPrefs, shared across all montages)";
-            _modelObjectField.RegisterValueChangedCallback(evt =>
-            {
-                var newModel = evt.newValue as GameObject;
-                OnPreviewModelChanged?.Invoke(newModel);
-            });
-            modelBox.Add(_modelObjectField);
-
-            overlayBar.Add(modelBox);
-
-            // 1.5 预览底层循环动作选择框 (Base Locomotion Motion)
-            var baseMotionBox = new VisualElement();
-            baseMotionBox.AddToClassList("montage-overlay-model-box");
-
-            var baseMotionLbl = new Label("Base");
-            baseMotionLbl.AddToClassList("montage-overlay-model-label");
-            baseMotionBox.Add(baseMotionLbl);
-
-            _baseMotionObjectField = new ObjectField
-            {
-                objectType = typeof(AnimationClip),
-                allowSceneObjects = false
-            };
-            _baseMotionObjectField.AddToClassList("montage-overlay-model-field");
-            _baseMotionObjectField.style.width = 110;
-            _baseMotionObjectField.tooltip = "Preview Base Locomotion Animation (Looping Idle/Run/Walk under upper-body montages. Set to None for static T-Pose)";
-            _baseMotionObjectField.RegisterValueChangedCallback(evt =>
-            {
-                var newClip = evt.newValue as AnimationClip;
-                OnPreviewBaseMotionChanged?.Invoke(newClip);
-            });
-            baseMotionBox.Add(_baseMotionObjectField);
-
-            overlayBar.Add(baseMotionBox);
-
-            // 2. 动画设置按钮组 (Root Motion & Foot IK)
-            var animSeparator = new VisualElement();
-            animSeparator.AddToClassList("montage-overlay-separator");
-            overlayBar.Add(animSeparator);
-
-            _rootMotionBtn = new Button(ToggleRootMotion) { text = "Root" };
-            _rootMotionBtn.AddToClassList("montage-overlay-btn");
-            _rootMotionBtn.tooltip = "Root Motion (Preview only: Toggle root displacement in 3D viewport)";
-            overlayBar.Add(_rootMotionBtn);
-
-            _footIKBtn = new Button(ToggleFootIK) { text = "Foot IK" };
-            _footIKBtn.AddToClassList("montage-overlay-btn");
-            _footIKBtn.tooltip = "Foot IK (Preview only: Toggle feet ground adaptation in 3D viewport)";
-            overlayBar.Add(_footIKBtn);
-
-            // 3. 相机与视图控制按钮组
-            var vpSeparator = new VisualElement();
-            vpSeparator.AddToClassList("montage-overlay-separator");
-            overlayBar.Add(vpSeparator);
-
-            var resetCamBtn = new Button(() => ResetCamera(true)) { text = "Cam" };
-            resetCamBtn.AddToClassList("montage-overlay-btn");
-            resetCamBtn.tooltip = "Reset Camera Position";
-            overlayBar.Add(resetCamBtn);
-
-            var toggleGridBtn = new Button(ToggleGroundGrid) { text = "Grid" };
-            toggleGridBtn.AddToClassList("montage-overlay-btn");
-            toggleGridBtn.tooltip = "Toggle Ground Grid";
-            overlayBar.Add(toggleGridBtn);
-
-            _toggleUnlitBtn = new Button(ToggleUnlit) { text = "Lit" };
-            _toggleUnlitBtn.AddToClassList("montage-overlay-btn");
-            _toggleUnlitBtn.tooltip = "Toggle Studio Lit / Pure Flat Lighting";
-            overlayBar.Add(_toggleUnlitBtn);
+            // 2. 视图显示多选标签列表 (Root Motion, Foot IK, Grid, Lit, Camera)
+            _viewMenuBtn = new Button(ToggleViewSettingsPanel) { text = "View ▾" };
+            _viewMenuBtn.AddToClassList("montage-overlay-btn");
+            _viewMenuBtn.tooltip = "Viewport Display Options (Root Motion, Foot IK, Grid, Shading, Camera)";
+            overlayBar.Add(_viewMenuBtn);
 
             Add(overlayBar);
+
+            // 3. 构建两个折叠浮动面板
+            BuildPreviewSettingsPanel();
+            Add(_previewSettingsPanel);
+
+            BuildViewSettingsPanel();
+            Add(_viewSettingsPanel);
 
             // 注册视口交互
             RegisterCallback<MouseDownEvent>(OnMouseDown);
@@ -205,35 +163,19 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         }
 
         /// <summary>
-        /// 更新根运动（Root Motion）按钮的高亮激活外观。
+        /// 更新根运动（Root Motion）预览开关状态。
         /// </summary>
         public void SetRootMotionState(bool enabled)
         {
-            if (_rootMotionBtn == null) return;
-            if (enabled)
-            {
-                _rootMotionBtn.AddToClassList("montage-overlay-btn-active");
-            }
-            else
-            {
-                _rootMotionBtn.RemoveFromClassList("montage-overlay-btn-active");
-            }
+            _rootMotionToggle?.SetValueWithoutNotify(enabled);
         }
 
         /// <summary>
-        /// 更新足部 IK（Foot IK）按钮的高亮激活外观。
+        /// 更新足部 IK（Foot IK）预览开关状态。
         /// </summary>
         public void SetFootIKState(bool enabled)
         {
-            if (_footIKBtn == null) return;
-            if (enabled)
-            {
-                _footIKBtn.AddToClassList("montage-overlay-btn-active");
-            }
-            else
-            {
-                _footIKBtn.RemoveFromClassList("montage-overlay-btn-active");
-            }
+            _footIKToggle?.SetValueWithoutNotify(enabled);
         }
 
         /// <summary>
@@ -401,6 +343,238 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             }
         }
 
+        /// <summary>
+        /// 设置独立模型覆盖开关状态（无需触发变更事件）。
+        /// </summary>
+        public void SetOverrideModelState(bool isOverride)
+        {
+            _overrideModelToggle?.SetValueWithoutNotify(isOverride);
+            if (_modelObjectField != null)
+            {
+                _modelObjectField.tooltip = isOverride
+                    ? "Preview Model Prefab [Asset Override Enabled: Bound to this Montage SO]"
+                    : "Preview Model Prefab [Global Shared Model across all montages]";
+            }
+        }
+
+        /// <summary>
+        /// 设置当前选中的预览上半身遮罩资产（无需触发变更事件）。
+        /// </summary>
+        public void SetSelectedUpperBodyMask(AvatarMask mask)
+        {
+            if (_upperBodyMaskObjectField != null)
+            {
+                _upperBodyMaskObjectField.SetValueWithoutNotify(mask);
+            }
+        }
+
+        #endregion
+
+        #region 私有视图设置面板逻辑
+
+        private void BuildPreviewSettingsPanel()
+        {
+            _previewSettingsPanel = new VisualElement();
+            _previewSettingsPanel.AddToClassList("montage-viewport-view-panel");
+            _previewSettingsPanel.style.display = DisplayStyle.None;
+
+            // 项 1: 独立模型覆盖开关
+            var overrideRow = new VisualElement();
+            overrideRow.AddToClassList("montage-view-panel-row");
+            var overrideLbl = new Label("Asset Override");
+            overrideLbl.AddToClassList("montage-view-panel-label");
+            overrideLbl.tooltip = "Enable per-asset model binding. When checked, the preview model and upper-body mask are bound to this Montage asset rather than shared globally.";
+            overrideRow.Add(overrideLbl);
+
+            _overrideModelToggle = new Toggle();
+            _overrideModelToggle.tooltip = "Toggle between Global Shared Model and Asset-Specific Model";
+            _overrideModelToggle.RegisterValueChangedCallback(evt =>
+            {
+                OnOverrideModelToggled?.Invoke(evt.newValue);
+            });
+            overrideRow.Add(_overrideModelToggle);
+            _previewSettingsPanel.Add(overrideRow);
+
+            // 分割线
+            var divider = new VisualElement();
+            divider.AddToClassList("montage-view-panel-divider");
+            _previewSettingsPanel.Add(divider);
+
+            // 项 2: Model 预览模型
+            var modelRow = new VisualElement();
+            modelRow.AddToClassList("montage-view-panel-row");
+            var modelLbl = new Label("Model");
+            modelLbl.AddToClassList("montage-view-panel-label");
+            modelLbl.tooltip = "Preview Model Prefab";
+            modelRow.Add(modelLbl);
+
+            _modelObjectField = new ObjectField
+            {
+                objectType = typeof(GameObject),
+                allowSceneObjects = false
+            };
+            _modelObjectField.AddToClassList("montage-view-panel-field");
+            _modelObjectField.RegisterValueChangedCallback(evt =>
+            {
+                var newModel = evt.newValue as GameObject;
+                OnPreviewModelChanged?.Invoke(newModel);
+            });
+            modelRow.Add(_modelObjectField);
+            _previewSettingsPanel.Add(modelRow);
+
+            // 项 3: Base Motion 底模动作
+            var baseMotionRow = new VisualElement();
+            baseMotionRow.AddToClassList("montage-view-panel-row");
+            var baseMotionLbl = new Label("Base Motion");
+            baseMotionLbl.AddToClassList("montage-view-panel-label");
+            baseMotionLbl.tooltip = "Base Locomotion Animation (Looping Idle/Run/Walk under upper-body montages. Set to None for static T-Pose)";
+            baseMotionRow.Add(baseMotionLbl);
+
+            _baseMotionObjectField = new ObjectField
+            {
+                objectType = typeof(AnimationClip),
+                allowSceneObjects = false
+            };
+            _baseMotionObjectField.AddToClassList("montage-view-panel-field");
+            _baseMotionObjectField.RegisterValueChangedCallback(evt =>
+            {
+                var newClip = evt.newValue as AnimationClip;
+                OnPreviewBaseMotionChanged?.Invoke(newClip);
+            });
+            baseMotionRow.Add(_baseMotionObjectField);
+            _previewSettingsPanel.Add(baseMotionRow);
+
+            // 项 4: UpperBody Mask 遮罩
+            var maskRow = new VisualElement();
+            maskRow.AddToClassList("montage-view-panel-row");
+            var maskLbl = new Label("Upper Mask");
+            maskLbl.AddToClassList("montage-view-panel-label");
+            maskLbl.tooltip = "Custom AvatarMask for UpperBody channel. Optional. If set, procedural spine decoupling will be bypassed.";
+            maskRow.Add(maskLbl);
+
+            _upperBodyMaskObjectField = new ObjectField
+            {
+                objectType = typeof(AvatarMask),
+                allowSceneObjects = false
+            };
+            _upperBodyMaskObjectField.AddToClassList("montage-view-panel-field");
+            _upperBodyMaskObjectField.RegisterValueChangedCallback(evt =>
+            {
+                var newMask = evt.newValue as AvatarMask;
+                OnPreviewUpperBodyMaskChanged?.Invoke(newMask);
+            });
+            maskRow.Add(_upperBodyMaskObjectField);
+            _previewSettingsPanel.Add(maskRow);
+        }
+
+        private void BuildViewSettingsPanel()
+        {
+            _viewSettingsPanel = new VisualElement();
+            _viewSettingsPanel.AddToClassList("montage-viewport-view-panel");
+            _viewSettingsPanel.style.minWidth = 140;
+            _viewSettingsPanel.style.display = DisplayStyle.None;
+
+            // 类似场景窗口的多选标签列表
+            _rootMotionToggle = new Toggle("Root Motion");
+            _rootMotionToggle.AddToClassList("montage-view-toggle-item");
+            _rootMotionToggle.tooltip = "Toggle root displacement preview in 3D viewport";
+            _rootMotionToggle.RegisterValueChangedCallback(evt =>
+            {
+                OnRootMotionToggled?.Invoke(evt.newValue);
+            });
+            _viewSettingsPanel.Add(_rootMotionToggle);
+
+            _footIKToggle = new Toggle("Foot IK");
+            _footIKToggle.value = true;
+            _footIKToggle.AddToClassList("montage-view-toggle-item");
+            _footIKToggle.tooltip = "Toggle feet ground adaptation preview in 3D viewport";
+            _footIKToggle.RegisterValueChangedCallback(evt =>
+            {
+                OnFootIKToggled?.Invoke(evt.newValue);
+            });
+            _viewSettingsPanel.Add(_footIKToggle);
+
+            _gridToggle = new Toggle("Ground Grid");
+            _gridToggle.value = _showGroundGrid;
+            _gridToggle.AddToClassList("montage-view-toggle-item");
+            _gridToggle.tooltip = "Toggle ground reference grid in 3D viewport";
+            _gridToggle.RegisterValueChangedCallback(evt =>
+            {
+                _showGroundGrid = evt.newValue;
+                RenderImmediate();
+            });
+            _viewSettingsPanel.Add(_gridToggle);
+
+            _litToggle = new Toggle("Lit Shading");
+            _litToggle.value = !_isUnlitMode;
+            _litToggle.AddToClassList("montage-view-toggle-item");
+            _litToggle.tooltip = "Toggle between studio lighting and flat unlit shading";
+            _litToggle.RegisterValueChangedCallback(evt =>
+            {
+                _isUnlitMode = !evt.newValue;
+                ApplyLightingMode(_isUnlitMode);
+                RenderImmediate();
+            });
+            _viewSettingsPanel.Add(_litToggle);
+
+            // 分割线
+            var divider = new VisualElement();
+            divider.AddToClassList("montage-view-panel-divider");
+            _viewSettingsPanel.Add(divider);
+
+            // 重置相机按钮
+            var resetCamBtn = new Button(() => ResetCamera(true)) { text = "Reset Camera" };
+            resetCamBtn.AddToClassList("montage-view-panel-button");
+            resetCamBtn.tooltip = "Reset camera position and framing to focus on model";
+            _viewSettingsPanel.Add(resetCamBtn);
+        }
+
+        private void TogglePreviewSettingsPanel()
+        {
+            if (_previewSettingsPanel == null) return;
+            bool isVisible = _previewSettingsPanel.style.display == DisplayStyle.Flex;
+            if (isVisible)
+            {
+                CloseAllPanels();
+            }
+            else
+            {
+                CloseAllPanels();
+                _previewSettingsPanel.style.display = DisplayStyle.Flex;
+                _previewMenuBtn?.AddToClassList("montage-overlay-btn-active");
+            }
+        }
+
+        private void ToggleViewSettingsPanel()
+        {
+            if (_viewSettingsPanel == null) return;
+            bool isVisible = _viewSettingsPanel.style.display == DisplayStyle.Flex;
+            if (isVisible)
+            {
+                CloseAllPanels();
+            }
+            else
+            {
+                CloseAllPanels();
+                _viewSettingsPanel.style.display = DisplayStyle.Flex;
+                _viewMenuBtn?.AddToClassList("montage-overlay-btn-active");
+            }
+        }
+
+        private void CloseAllPanels()
+        {
+            if (_previewSettingsPanel != null)
+            {
+                _previewSettingsPanel.style.display = DisplayStyle.None;
+            }
+            if (_viewSettingsPanel != null)
+            {
+                _viewSettingsPanel.style.display = DisplayStyle.None;
+            }
+            _previewMenuBtn?.RemoveFromClassList("montage-overlay-btn-active");
+            _viewMenuBtn?.RemoveFromClassList("montage-overlay-btn-active");
+        }
+
         #endregion
 
         #region 私有相机与渲染逻辑
@@ -456,18 +630,14 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void ToggleRootMotion()
         {
-            if (_rootMotionBtn == null) return;
-            bool newState = !_rootMotionBtn.ClassListContains("montage-overlay-btn-active");
-            SetRootMotionState(newState);
-            OnRootMotionToggled?.Invoke(newState);
+            if (_rootMotionToggle == null) return;
+            _rootMotionToggle.value = !_rootMotionToggle.value;
         }
 
         private void ToggleFootIK()
         {
-            if (_footIKBtn == null) return;
-            bool newState = !_footIKBtn.ClassListContains("montage-overlay-btn-active");
-            SetFootIKState(newState);
-            OnFootIKToggled?.Invoke(newState);
+            if (_footIKToggle == null) return;
+            _footIKToggle.value = !_footIKToggle.value;
         }
 
         private void ToggleGroundGrid()
@@ -567,6 +737,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         private void ToggleUnlit()
         {
             _isUnlitMode = !_isUnlitMode;
+            if (_litToggle != null) _litToggle.SetValueWithoutNotify(!_isUnlitMode);
             ApplyLightingMode(_isUnlitMode);
             RenderImmediate();
         }
@@ -579,11 +750,6 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             {
                 foreach (var light in _renderUtility.lights) light.enabled = false;
                 _renderUtility.ambientColor = Color.white;
-                if (_toggleUnlitBtn != null)
-                {
-                    _toggleUnlitBtn.text = "Flat";
-                    _toggleUnlitBtn.tooltip = "Current: Flat / Unlit Mode";
-                }
             }
             else
             {
@@ -606,11 +772,6 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 }
 
                 _renderUtility.ambientColor = new Color(0.26f, 0.27f, 0.29f, 1f);
-                if (_toggleUnlitBtn != null)
-                {
-                    _toggleUnlitBtn.text = "Lit";
-                    _toggleUnlitBtn.tooltip = "Current: Studio Lit Mode";
-                }
             }
         }
 
@@ -659,7 +820,24 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private void OnMouseDown(MouseDownEvent evt)
         {
-            if (evt.button == 1)
+            if (evt.button == 0)
+            {
+                bool isAnyPanelOpen = (_previewSettingsPanel != null && _previewSettingsPanel.style.display == DisplayStyle.Flex) ||
+                                      (_viewSettingsPanel != null && _viewSettingsPanel.style.display == DisplayStyle.Flex);
+                if (isAnyPanelOpen)
+                {
+                    bool insidePreview = _previewSettingsPanel != null && _previewSettingsPanel.worldBound.Contains(evt.mousePosition);
+                    bool insideView = _viewSettingsPanel != null && _viewSettingsPanel.worldBound.Contains(evt.mousePosition);
+                    bool insidePreviewBtn = _previewMenuBtn != null && _previewMenuBtn.worldBound.Contains(evt.mousePosition);
+                    bool insideViewBtn = _viewMenuBtn != null && _viewMenuBtn.worldBound.Contains(evt.mousePosition);
+
+                    if (!insidePreview && !insideView && !insidePreviewBtn && !insideViewBtn)
+                    {
+                        CloseAllPanels();
+                    }
+                }
+            }
+            else if (evt.button == 1)
             {
                 _isRightMouseButtonHeld = true;
                 _previewImage.Focus();

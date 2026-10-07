@@ -608,6 +608,15 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 block.AddToClassList("montage-anim-segment-selected");
             }
 
+            // 骨骼类型一致性检查：以资产内首个有效片段为准，若不一致则应用红框警示
+            bool isSkeletonMismatch = false;
+            bool? anchorIsHuman = _targetAsset?.GetAnchorSkeletonIsHuman();
+            if (anchorIsHuman.HasValue && seg.Clip != null && seg.Clip.isHumanMotion != anchorIsHuman.Value)
+            {
+                isSkeletonMismatch = true;
+                block.AddToClassList("montage-anim-segment-mismatch");
+            }
+
             block.style.left = left;
             block.style.width = width;
             block.style.height = TRACK_HEIGHT - 4f;
@@ -629,7 +638,10 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 // 片段名称标签（超出自身独占范围显示省略号 Ellipsis）
                 var label = new Label(seg.SegmentName);
                 label.AddToClassList("montage-anim-segment-title");
-                label.tooltip = $"{seg.SegmentName}\nStart: {seg.StartTime:F2}s (Frame {Mathf.RoundToInt(seg.StartTime * _frameRate)})\nDuration: {seg.Duration:F2}s ({Mathf.RoundToInt(seg.Duration * _frameRate)} frames)\nRate: {seg.PlayRate:F2}x";
+                string mismatchWarning = isSkeletonMismatch
+                    ? $"\n[!] 骨骼类型不匹配: 本片段为 {(seg.Clip.isHumanMotion ? "Humanoid" : "Generic")}，与基准片段 ({(anchorIsHuman.Value ? "Humanoid" : "Generic")}) 冲突！"
+                    : "";
+                label.tooltip = $"{seg.SegmentName}\nStart: {seg.StartTime:F2}s (Frame {Mathf.RoundToInt(seg.StartTime * _frameRate)})\nDuration: {seg.Duration:F2}s ({Mathf.RoundToInt(seg.Duration * _frameRate)} frames)\nRate: {seg.PlayRate:F2}x{mismatchWarning}";
                 selfContent.Add(label);
 
                 // 角标：调速倍率指示（非 1.0x 高亮）

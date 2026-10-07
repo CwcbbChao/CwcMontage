@@ -5,6 +5,17 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.2] - 2026-10-07
+
+### Added
+- **Generic Skeleton & Asset-Specific Preview Support**: Added `Asset Override` mode allowing montages to bind dedicated preview models and optional custom `AvatarMask` without polluting global shared preferences.
+- **Custom Upper-Body AvatarMask Support**: Added `_customUpperBodyMask` field to `MontageSequenceSO`, allowing non-humanoid or bespoke humanoid characters to use customized torso masks.
+- **Track Clip Skeleton Consistency Validation**: Visualized skeleton compatibility mismatches across animation track segments using red warning outlines (`.montage-anim-segment-mismatch`) and tooltips based on the sequence's anchor clip.
+- **SceneView-Style Minimalist Viewport Overlay**: Refactored preview viewport toolbar into two compact text capsule dropdown menus (`Preview ▾` for model/motion/mask configuration and `View ▾` for scene-view multi-toggle options such as Root Motion, Foot IK, Grid, and Shading).
+
+### Changed
+- **Procedural Decoupling Bypass**: Updated `MontageCoordinator.ApplyUpperBodySpineDecoupling` to automatically yield when a custom `AvatarMask` is provided, preventing standard spine orientation decoupling from corrupting generic or specialized masks.
+
 ## [1.2.1] - 2026-10-03
 
 ### Added

@@ -1232,7 +1232,8 @@ namespace Cwcbb.Tools.CwcMontage
 
         protected virtual void ApplyUpperBodySpineDecoupling()
         {
-            if (_animator == null || !_animator.isHuman || _layerStates.Count <= 0) return;
+            // 脊柱解耦朝向修正严格限定于通用程序化标准上半身遮罩；若配置了自定义 Mask，全权交付自定义遮罩，绝不越权干预
+            if (_animator == null || !_animator.isHuman || _customUpperBodyMask != null || _layerStates.Count <= 0) return;
 
             // 0. 若全身动作（FullBody）正在播放且具有有效权重，优先保持全身动作姿态，不执行 Spine 局部朝向修正
             if (_layerStates.Count > 1)

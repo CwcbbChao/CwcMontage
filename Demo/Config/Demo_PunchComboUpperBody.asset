@@ -100,6 +100,10 @@ MonoBehaviour:
   _additiveWeight: 1
   _additiveSegments: []
   _decoupleUpperBodyOrientation: 1
+  _customUpperBodyMask: {fileID: 0}
+  _overridePreviewModel: 0
+  _previewModel: {fileID: -1728013695380148634, guid: 320f4ae754154ab4eacb935350c6f431,
+    type: 3}
   _animationLayer: 0
   _basePlayRate: 1
   _isLooping: 0

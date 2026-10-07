@@ -451,6 +451,75 @@
     padding-left: 4px;
 }
 
+.montage-viewport-view-panel {
+    position: absolute;
+    top: 36px;
+    right: 8px;
+    min-width: 260px;
+    background-color: rgba(30, 30, 30, 0.95);
+    border-width: 1px;
+    border-color: rgba(255, 255, 255, 0.18);
+    border-radius: 5px;
+    padding: 8px 10px;
+}
+
+.montage-view-panel-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.montage-view-panel-label {
+    font-size: 11px;
+    color: #CCCCCC;
+    min-width: 90px;
+}
+
+.montage-view-panel-field {
+    flex-grow: 1;
+    height: 20px;
+    margin: 0;
+}
+
+.montage-view-panel-divider {
+    height: 1px;
+    background-color: rgba(255, 255, 255, 0.12);
+    margin-top: 4px;
+    margin-bottom: 6px;
+}
+
+.montage-view-panel-btn-row {
+    flex-direction: row;
+    justify-content: flex-end;
+    align-items: center;
+}
+
+.montage-view-toggle-item {
+    font-size: 11px;
+    color: #CCCCCC;
+    margin-bottom: 4px;
+}
+
+.montage-view-toggle-item:hover {
+    color: #FFFFFF;
+}
+
+.montage-view-panel-button {
+    height: 22px;
+    font-size: 11px;
+    background-color: rgba(255, 255, 255, 0.08);
+    border-width: 0;
+    border-radius: 3px;
+    color: #CCCCCC;
+    margin-top: 2px;
+}
+
+.montage-view-panel-button:hover {
+    background-color: rgba(255, 255, 255, 0.18);
+    color: #FFFFFF;
+}
+
 .montage-inspector-sidebar {
     min-width: 220px;
     background-color: var(--unity-colors-window-background, #252525);
@@ -1248,6 +1317,20 @@
 .montage-anim-segment-selected .montage-anim-segment-title {
     color: #FFFFFF;
     -unity-font-style: bold;
+}
+
+.montage-anim-segment-mismatch {
+    border-width: 1.5px;
+    border-color: #E63946;
+}
+
+.montage-anim-segment-mismatch:hover {
+    border-color: #FF4D5E;
+}
+
+.montage-anim-segment-selected.montage-anim-segment-mismatch {
+    border-width: 2px;
+    border-color: #FF4D5E;
 }
 
 .montage-anim-segment-self-content {

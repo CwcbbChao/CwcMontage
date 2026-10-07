@@ -55,6 +55,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         private VisualElement _tracksContentWrapper;
         private GameObject _currentPreviewPrefab;
         private AnimationClip _currentPreviewBaseMotion;
+        private AvatarMask _currentPreviewUpperBodyMask;
 
         // 预览控制与播放状态
         private float _previewSpeed = 1.0f;
@@ -303,7 +304,9 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _viewport = new MontagePreviewViewportElement();
             _viewport.style.flexGrow = 1;
             _viewport.OnPreviewModelChanged += OnViewportModelChanged;
+            _viewport.OnOverrideModelToggled += OnViewportOverrideModelToggled;
             _viewport.OnPreviewBaseMotionChanged += OnViewportBaseMotionChanged;
+            _viewport.OnPreviewUpperBodyMaskChanged += OnViewportUpperBodyMaskChanged;
             _viewport.OnRootMotionToggled += OnPreviewRootMotionChanged;
             _viewport.OnFootIKToggled += OnPreviewFootIKChanged;
             _viewport.SetRootMotionState(_previewRootMotion);
@@ -698,6 +701,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _currentPreviewBaseMotion = ResolvePreviewBaseMotion();
             _viewport.Initialize(_targetAsset, _currentPreviewPrefab, ref _previewObject);
             _viewport.SetSelectedBaseMotion(_currentPreviewBaseMotion);
+            _viewport.SetOverrideModelState(_targetAsset != null && _targetAsset.OverridePreviewModel);
+            _viewport.SetSelectedUpperBodyMask(ResolvePreviewUpperBodyMask());
 
             _contentDuration = _targetAsset != null ? _targetAsset.TotalDuration : 0f;
             var (initTotalWidth, initClipLength) = CalculateTimelineDimensions();
@@ -750,8 +755,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                     _topLevelPreviewMixer.SetInputWeight(0, 0.0f);
                 }
 
-                // 1. UpperBody 通道设置
-                var upperMask = MontageMaskUtility.GetOrCreateHumanoidUpperBodyMask();
+                // 1. UpperBody 通道设置 (动态解析自定义或内置人形遮罩)
+                var upperMask = ResolvePreviewUpperBodyMask();
                 _topLevelPreviewMixer.SetLayerMaskFromAvatarMask(1, upperMask);
                 _topLevelPreviewMixer.SetLayerAdditive(1, false);
 
@@ -968,6 +973,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         private void ApplyUpperBodySpineDecouplingPreview()
         {
             if (_previewAnimator == null || !_previewAnimator.isHuman || _targetAsset == null || !_targetAsset.DecoupleUpperBodyOrientation) return;
+            // 脊柱解耦仅服务于通用程序化标准遮罩；若视口或资产配置了自定义 Mask，全权交付自定义遮罩，绝不越权干预
+            if (_currentPreviewUpperBodyMask != null || _targetAsset.CustomUpperBodyMask != null) return;
             if (!_targetAsset.EnableUpperBody || !_upperBodyMixer.IsValid() || _upperBodySegmentPlayables.Count == 0) return;
 
             // 0. 若 FullBody 当前正在播放且具有有效权重，FullBody 拥有霸权主导权，严禁篡改 Spine 姿态！
@@ -1441,6 +1448,12 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private GameObject ResolvePreviewModel()
         {
+            // 0. 若当前蒙太奇资产启用了独立预览模型覆盖且已绑定模型
+            if (_targetAsset != null && _targetAsset.OverridePreviewModel && _targetAsset.PreviewModel != null)
+            {
+                return _targetAsset.PreviewModel;
+            }
+
             // 1. 若当前会话已有显式指定
             if (_currentPreviewPrefab != null)
             {
@@ -1490,22 +1503,112 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         {
             _currentPreviewPrefab = newModel;
 
-            if (newModel != null)
+            if (_targetAsset != null && _targetAsset.OverridePreviewModel)
             {
-                string path = AssetDatabase.GetAssetPath(newModel);
-                string guid = AssetDatabase.AssetPathToGUID(path);
-                if (!string.IsNullOrEmpty(guid))
-                {
-                    EditorPrefs.SetString(PREVIEW_MODEL_PREFS_KEY, guid);
-                }
+                _targetAsset.PreviewModel = newModel;
+                EditorUtility.SetDirty(_targetAsset);
             }
             else
             {
-                EditorPrefs.DeleteKey(PREVIEW_MODEL_PREFS_KEY);
+                if (newModel != null)
+                {
+                    string path = AssetDatabase.GetAssetPath(newModel);
+                    string guid = AssetDatabase.AssetPathToGUID(path);
+                    if (!string.IsNullOrEmpty(guid))
+                    {
+                        EditorPrefs.SetString(PREVIEW_MODEL_PREFS_KEY, guid);
+                    }
+                }
+                else
+                {
+                    EditorPrefs.DeleteKey(PREVIEW_MODEL_PREFS_KEY);
+                }
             }
 
             InitializePreviewAndPlayables();
             _viewport.RenderImmediate();
+        }
+
+        private void OnViewportOverrideModelToggled(bool isOverride)
+        {
+            if (_targetAsset == null) return;
+
+            _targetAsset.OverridePreviewModel = isOverride;
+            if (isOverride)
+            {
+                if (_currentPreviewPrefab != null)
+                {
+                    _targetAsset.PreviewModel = _currentPreviewPrefab;
+                }
+                if (_currentPreviewUpperBodyMask != null)
+                {
+                    _targetAsset.CustomUpperBodyMask = _currentPreviewUpperBodyMask;
+                }
+            }
+            else
+            {
+                _currentPreviewPrefab = null;
+                _currentPreviewUpperBodyMask = null;
+            }
+
+            EditorUtility.SetDirty(_targetAsset);
+            InitializePreviewAndPlayables();
+            _viewport.RenderImmediate();
+        }
+
+        private void OnViewportUpperBodyMaskChanged(AvatarMask newMask)
+        {
+            _currentPreviewUpperBodyMask = newMask;
+
+            if (_targetAsset != null && _targetAsset.OverridePreviewModel)
+            {
+                _targetAsset.CustomUpperBodyMask = newMask;
+                EditorUtility.SetDirty(_targetAsset);
+            }
+
+            if (_topLevelPreviewMixer.IsValid())
+            {
+                var upperMask = ResolvePreviewUpperBodyMask();
+                _topLevelPreviewMixer.SetLayerMaskFromAvatarMask(1, upperMask);
+            }
+
+            _viewport.RenderImmediate();
+        }
+
+        private AvatarMask ResolvePreviewUpperBodyMask()
+        {
+            if (_currentPreviewUpperBodyMask != null)
+            {
+                return _currentPreviewUpperBodyMask;
+            }
+
+            if (_targetAsset != null && _targetAsset.CustomUpperBodyMask != null)
+            {
+                return _targetAsset.CustomUpperBodyMask;
+            }
+
+            if (_previewObject != null)
+            {
+                var coordinator = _previewObject.GetComponentInParent<MontageCoordinator>()
+                               ?? _previewObject.GetComponentInChildren<MontageCoordinator>(true);
+                if (coordinator != null)
+                {
+                    var so = new SerializedObject(coordinator);
+                    var prop = so.FindProperty("_customUpperBodyMask");
+                    var custom = prop != null ? prop.objectReferenceValue as AvatarMask : null;
+                    if (custom != null) return custom;
+                }
+            }
+
+            bool isHumanoid = _previewAnimator != null && _previewAnimator.avatar != null && _previewAnimator.isHuman;
+            if (!isHumanoid && _previewObject != null)
+            {
+                Debug.LogWarning(
+                    "[CwcMontage] 预览模型骨架不是 Humanoid：内置程序化上身遮罩在该骨架上不生效，UpperBody 层会退化为全身覆盖。" +
+                    "请在视口 View 面板中指定路径式 AvatarMask，或在 MontageSequenceSO 资产中配置 CustomUpperBodyMask。");
+            }
+
+            return MontageMaskUtility.GetOrCreateHumanoidUpperBodyMask();
         }
 
         private AnimationClip ResolvePreviewBaseMotion()
