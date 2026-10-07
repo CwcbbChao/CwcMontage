@@ -36,6 +36,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
         private ObjectField _modelObjectField;
         private ObjectField _baseMotionObjectField;
+        private ObjectField _upperBodyMaskObjectField;
         private Button _rootMotionBtn;
         private Button _footIKBtn;
         private Button _toggleUnlitBtn;
@@ -57,6 +58,12 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         /// 当用户在视口中切换或拖入新的底层循环动作（Base Locomotion Motion）时触发。
         /// </summary>
         public event Action<AnimationClip> OnPreviewBaseMotionChanged;
+
+        /// <summary>
+        /// 当用户在视口中切换"上身遮罩（UpperBody Mask）"时触发。
+        /// 非 Humanoid（Generic）骨架必须显式指定路径式遮罩，否则第 1 层会退化为"未过滤"（覆盖全身、把 Base 的腿一起顶掉）。
+        /// </summary>
+        public event Action<AvatarMask> OnPreviewUpperBodyMaskChanged;
 
         /// <summary>
         /// 当用户切换预览根运动（Root Motion）时触发。
@@ -143,6 +150,31 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             baseMotionBox.Add(_baseMotionObjectField);
 
             overlayBar.Add(baseMotionBox);
+
+            // 1.6 预览上身遮罩选择框 (UpperBody Mask)
+            var upperMaskBox = new VisualElement();
+            upperMaskBox.AddToClassList("montage-overlay-model-box");
+
+            var upperMaskLbl = new Label("Mask");
+            upperMaskLbl.AddToClassList("montage-overlay-model-label");
+            upperMaskBox.Add(upperMaskLbl);
+
+            _upperBodyMaskObjectField = new ObjectField
+            {
+                objectType = typeof(AvatarMask),
+                allowSceneObjects = false
+            };
+            _upperBodyMaskObjectField.AddToClassList("montage-overlay-model-field");
+            _upperBodyMaskObjectField.style.width = 110;
+            _upperBodyMaskObjectField.tooltip = "UpperBody 层使用的 AvatarMask（可选）。\nHumanoid 骨架留空即使用内置人形上身遮罩；\n非 Humanoid（Generic）骨架必须指定路径式上身遮罩，否则该层会按全身生效（把 Base 的腿一起覆盖）。";
+            _upperBodyMaskObjectField.RegisterValueChangedCallback(evt =>
+            {
+                var newMask = evt.newValue as AvatarMask;
+                OnPreviewUpperBodyMaskChanged?.Invoke(newMask);
+            });
+            upperMaskBox.Add(_upperBodyMaskObjectField);
+
+            overlayBar.Add(upperMaskBox);
 
             // 2. 动画设置按钮组 (Root Motion & Foot IK)
             var animSeparator = new VisualElement();
@@ -398,6 +430,17 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             if (_baseMotionObjectField != null)
             {
                 _baseMotionObjectField.SetValueWithoutNotify(clip);
+            }
+        }
+
+        /// <summary>
+        /// 设置当前视口"上身遮罩"选择框展示的 AvatarMask 引用（不触发回调通知）。
+        /// </summary>
+        public void SetSelectedUpperBodyMask(AvatarMask mask)
+        {
+            if (_upperBodyMaskObjectField != null)
+            {
+                _upperBodyMaskObjectField.SetValueWithoutNotify(mask);
             }
         }
 
