@@ -55,6 +55,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         private VisualElement _tracksContentWrapper;
         private GameObject _currentPreviewPrefab;
         private AnimationClip _currentPreviewBaseMotion;
+        // 预览用的 UpperBody 遮罩（视口指定；为空时按 rig 类型回退，见 ResolvePreviewUpperBodyMask）
+        private AvatarMask _previewUpperBodyMask;
 
         // 预览控制与播放状态
         private float _previewSpeed = 1.0f;
@@ -304,6 +306,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _viewport.style.flexGrow = 1;
             _viewport.OnPreviewModelChanged += OnViewportModelChanged;
             _viewport.OnPreviewBaseMotionChanged += OnViewportBaseMotionChanged;
+            _viewport.OnPreviewUpperBodyMaskChanged += OnViewportUpperBodyMaskChanged;
             _viewport.OnRootMotionToggled += OnPreviewRootMotionChanged;
             _viewport.OnFootIKToggled += OnPreviewFootIKChanged;
             _viewport.SetRootMotionState(_previewRootMotion);
@@ -698,6 +701,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             _currentPreviewBaseMotion = ResolvePreviewBaseMotion();
             _viewport.Initialize(_targetAsset, _currentPreviewPrefab, ref _previewObject);
             _viewport.SetSelectedBaseMotion(_currentPreviewBaseMotion);
+            _viewport.SetSelectedUpperBodyMask(_previewUpperBodyMask);
 
             _contentDuration = _targetAsset != null ? _targetAsset.TotalDuration : 0f;
             var (initTotalWidth, initClipLength) = CalculateTimelineDimensions();
@@ -751,7 +755,8 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                 }
 
                 // 1. UpperBody 通道设置
-                var upperMask = MontageMaskUtility.GetOrCreateHumanoidUpperBodyMask();
+                //    遮罩解析：视口指定 → 预览对象上 MontageCoordinator 的自定义遮罩 → 按 rig 类型回退（见 ResolvePreviewUpperBodyMask）
+                var upperMask = ResolvePreviewUpperBodyMask(_previewObject, _previewAnimator, _previewUpperBodyMask);
                 _topLevelPreviewMixer.SetLayerMaskFromAvatarMask(1, upperMask);
                 _topLevelPreviewMixer.SetLayerAdditive(1, false);
 
@@ -1621,6 +1626,59 @@ namespace Cwcbb.Tools.CwcMontage.Editor
 
             InitializePreviewAndPlayables();
             _viewport.RenderImmediate();
+        }
+
+        private void OnViewportUpperBodyMaskChanged(AvatarMask newMask)
+        {
+            _previewUpperBodyMask = newMask;
+
+            // 遮罩可直接替换到已构建的预览图上，无需重建整张图
+            if (_topLevelPreviewMixer.IsValid())
+            {
+                _topLevelPreviewMixer.SetLayerMaskFromAvatarMask(
+                    1, ResolvePreviewUpperBodyMask(_previewObject, _previewAnimator, _previewUpperBodyMask));
+            }
+
+            _viewport.RenderImmediate();
+        }
+
+        /// <summary>
+        /// 解析预览第 1 层（UpperBody）使用的 AvatarMask。
+        /// 顺序：视口显式指定 → 预览对象上 MontageCoordinator 的 _customUpperBodyMask → 按 rig 类型回退。
+        /// <para>
+        /// 为什么要这样做：内置遮罩 <see cref="MontageMaskUtility.GetOrCreateHumanoidUpperBodyMask"/> 是**纯 humanoid 部件式**
+        /// （transformCount == 0），只能作用于 Humanoid 骨架。在 Generic（非 Humanoid）骨架上它无法映射到任何骨骼，
+        /// Unity 会退化为"该层不做过滤"，于是 UpperBody 层按全身生效、把 Base Locomotion 的下半身一起覆盖，
+        /// 预览就表现为"只有上身动、下身不动"。因此非 Humanoid 骨架必须显式提供**路径式**上身遮罩，
+        /// 与运行时 <c>MontageCoordinator.GetUpperBodyMask()</c> 的语义保持一致。
+        /// </para>
+        /// </summary>
+        internal static AvatarMask ResolvePreviewUpperBodyMask(GameObject previewObject, Animator previewAnimator, AvatarMask explicitMask)
+        {
+            if (explicitMask != null) return explicitMask;
+
+            if (previewObject != null)
+            {
+                var coordinator = previewObject.GetComponentInParent<MontageCoordinator>();
+                if (coordinator == null) coordinator = previewObject.GetComponentInChildren<MontageCoordinator>(true);
+                if (coordinator != null)
+                {
+                    var so = new SerializedObject(coordinator);
+                    var prop = so.FindProperty("_customUpperBodyMask");
+                    var custom = prop != null ? prop.objectReferenceValue as AvatarMask : null;
+                    if (custom != null) return custom;
+                }
+            }
+
+            bool isHumanoid = previewAnimator != null && previewAnimator.avatar != null && previewAnimator.isHuman;
+            if (!isHumanoid)
+            {
+                Debug.LogWarning(
+                    "[CwcMontage] 预览模型骨架不是 Humanoid：内置上身遮罩（humanoid 部件式）在该骨架上不生效，第 1 层会按全身覆盖。" +
+                    "请在预览视口的 “Mask” 槽指定路径式上身遮罩（或给预览对象挂 MontageCoordinator 并设置 _customUpperBodyMask）。");
+            }
+
+            return MontageMaskUtility.GetOrCreateHumanoidUpperBodyMask();
         }
 
         private void CleanupPlayablesAndPreview()
