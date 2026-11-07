@@ -1,0 +1,70 @@
+# Changelog
+
+All notable changes to this package will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [1.2.2] - 2026-10-07
+
+### Added
+- **Generic Skeleton & Asset-Specific Preview Support**: Added `Asset Override` mode allowing montages to bind dedicated preview models and optional custom `AvatarMask` without polluting global shared preferences.
+- **Custom Upper-Body AvatarMask Support**: Added `_customUpperBodyMask` field to `MontageSequenceSO`, allowing non-humanoid or bespoke humanoid characters to use customized torso masks.
+- **Track Clip Skeleton Consistency Validation**: Visualized skeleton compatibility mismatches across animation track segments using red warning outlines (`.montage-anim-segment-mismatch`) and tooltips based on the sequence's anchor clip.
+- **SceneView-Style Minimalist Viewport Overlay**: Refactored preview viewport toolbar into two compact text capsule dropdown menus (`Preview ▾` for model/motion/mask configuration and `View ▾` for scene-view multi-toggle options such as Root Motion, Foot IK, Grid, and Shading).
+
+### Changed
+- **Procedural Decoupling Bypass**: Updated `MontageCoordinator.ApplyUpperBodySpineDecoupling` to automatically yield when a custom `AvatarMask` is provided, preventing standard spine orientation decoupling from corrupting generic or specialized masks.
+- **Documentation & Source Localization**: All source comments, Inspector tooltips and runtime messages are now English-only, the demo scripts are fully documented, the user manual was rebuilt with an installation guide, package structure, action block references and troubleshooting, and the README was reorganised around the current feature set.
+
+## [1.2.1] - 2026-10-03
+
+### Added
+- **Open-Closed Principle Virtual Hook Architecture**: Refactored core methods and lifecycle in `MontageCoordinator`, `MontagePlayer`, and `MontageAnimatorDispatcher` to `virtual` / `protected virtual`, enabling seamless inheritance and customization without modifying source code.
+- **Third-Party Playables Framework Extensibility**: Added protected overridable factory and lifecycle hooks (`CreatePlayableGraph`, `CreatePlayableOutput`, `CreateLocomotionPlayable`, `DestroyPlayableGraph`, `DestroyInternalPlayables`, `ShouldEvaluateGraph`) to support non-intrusive integration with external animation pipelines (such as Animancer).
+- **Non-blocking Handle Dispatchers**: Upgraded handle query and dispatch methods to protected virtual, empowering subclasses to override slot validation and layer resolution.
+
+### Changed
+- **Protected Member Visibility**: Relaxed non-serialized fields and internal helpers from `private` to `protected`, allowing derived classes full visibility over player state machines, layer runtime structures, and dispatchers.
+
+## [1.2.0] - 2026-09-26
+
+### Added
+- **0-GC Runtime State Separation**: Introduced `IMontageBlockState` and `MontageSpatialBlockState`, completely separating transient runtime mutable data from action block assets.
+- **Anti-Boxing Generic Base Classes**: Added `MontageActionBlockBase<TState>` and `MontageSpatialActionBlockBase<TState>` with `where TState : class, IMontageBlockState, new()`, ensuring 100% immutable asset singletons and type-safe 0-GC dispatch.
+- **Typed Block State Pool**: Implemented `MontageBlockStatePool` with per-`Type` stack caching, eliminating type thrashing GC allocations when characters alternate between different skill montages.
+- **Baked Immutable Action Blocks**: Added `MontageSequenceSO.BakedRuntimeActionBlocks` to cache sorted, active blocks from non-muted tracks, completely eliminating `blockData.Clone()` and `action.Clone()`.
+- **Per-Coordinator Micro Player Pool**: `MontageCoordinator` now maintains an on-demand micro player pool (capacity 2~3) per character with in-place reuse, eliminating per-play `MontagePlayer` allocations.
+
+### Changed
+- **Interruption Lifetime Protection**: Refactored `MontageCoordinator.CheckAndReleaseSlot` so players are only recycled after layer slot weights smoothly decay to 0 and all channel references are cleared, preserving C0/C1 dynamic continuity and preventing bind pose snaps upon interruption.
+- **Auditing Built-in Blocks**: Refactored `VFXActionBlock`, `AudioActionBlock`, and `PrefabSpawnActionBlock` to inherit from generic bases and encapsulate runtime instances into reusable inner states (`VFXState`, `AudioState`, `PrefabSpawnState`).
+- **Penetration Sweep Safeguard**: Preserved strict paired `OnEnter` -> `OnExit` execution for single-frame block penetration during frame drops in `MontagePlayer.SweepInterval`.
+
+## [1.1.0] - 2026-09-25
+
+### Added
+- **Multi-Layer Channel Architecture**: Built-in 4-tier Playables mixing topology (Locomotion -> UpperBody -> FullBody -> Additive) with standard Humanoid UpperBody AvatarMask for out-of-the-box torso action playback while moving.
+- **Upper-Body Spine Decoupling**: Dynamic procedural orientation decoupling tool (`MontageSpineDecoupleUtility`) preventing lower-body locomotion pelvic tilt/sway from contaminating upper-body attack strikes and aiming.
+- **Independent Segment Blend In/Out**: Individual clip-level fade-in and fade-out envelope curves (`BlendInTime`, `BlendOutTime`, `BlendInCurve`, `BlendOutCurve`) allowing non-contiguous segments to blend smoothly across timeline gaps.
+- **Built-in Standalone Dummy Prefab**: Added lightweight, pure-skeleton Humanoid dummy (`Dummy.prefab`) in `Runtime/Resources/` for safe, zero-allocation runtime decouple trajectory sampling.
+
+### Changed
+- **Segment Blending Continuity**: Refactored `MontageSequenceSO.EvaluateSegments` with sequence continuity analysis (`HasContinuousPreviousSegment`, `HasContinuousNextSegment`), preventing Crossfade overlaps and abutting clips from double-fading and eliminating layer weight dips.
+- **Persistent Singleton Sampling Dummy**: Replaced runtime cloning of gameplay character entities with a global persistent pure-skeleton dummy, eliminating GC spikes and completely preventing business MonoBehaviour `Awake()`/`OnEnable()` side effects.
+- **Layer Weight Isolation**: Decoupled `MontagePlayer.Stop()` blend-out latching from multi-layer slot weight updates via `CalculateTargetWeight()`, guaranteeing smooth decay and preventing hard cuts on interruption.
+- **Accurate Handle Weight Query**: `MontageHandle.CurrentWeight` now retrieves the target layer slot's true evaluation weight instead of the global player weight.
+
+## [1.0.0] - 2026-09-09
+
+### Added
+- **Core Playables Pipeline**: Pure presentation-layer animation montage player built entirely on Unity's Playables API.
+- **Dual-Slot Ping-Pong Mixer**: Fixed two-slot Mixer topology for cross-fading, achieving lifetime PlayableGraph stability and zero runtime GC allocations.
+- **Interval Sweep Sampling**: Dynamic `(LastTime, CurrentTime]` sweep-based event sampling, guaranteeing zero skipped events and paired `OnEnter/OnUpdate/OnExit` lifecycles even during extreme frame drops.
+- **Native Physical Sections**: Objectively geometric split timestamps providing $O(1)$ zero-allocation section duration lookup and range detection.
+- **Adaptive Time Warping**: External-driven section time scaling allowing seamless alignment between design numerical timing and visual animation lengths.
+- **External Progress & Jump API**: Comprehensive handle-based API (`JumpToSection`, `JumpToTime`, `EvaluateSectionProgress`) enabling external ability systems to lead playback flow.
+- **Root Motion Delegation**: Masked filtering for horizontal, vertical, and rotational delta components dispatched via `IMontageRootMotionReceiver` without intruding into character movement controllers.
+- **Custom Action Blocks**: Extensible abstract base classes (`MontageActionBlockBase`, `MontageSpatialActionBlockBase`) with built-in Audio, VFX, and Prefab spawning blocks.
+- **Montage Timeline Editor**: Interactive Unity Editor window featuring multi-track scrubbing, snap utilities, visual section markers, real-time Scene view preview, and track element inspectors.
+- **Standalone Demo Showcase**: Self-contained humanoid combat demo with sample combo sequences, dynamic VFX generators, and real-time Playables monitor overlay HUD.
