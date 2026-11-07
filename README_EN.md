@@ -1,4 +1,4 @@
-# CwcMontage - High-Performance Playables Animation Montage System
+# CwcMontage - Playables Animation Montage System for Unity
 
 [![Unity 2021.3+](https://img.shields.io/badge/Unity-2021.3%2B-blue.svg)](https://unity.com/)
 [![License](https://img.shields.io/badge/License-Custom%20(Free%20for%20Games)-blue.svg)](LICENSE)
@@ -7,112 +7,147 @@
 
 **English** | [简体中文](README.md)
 
-> **Official Online Documentation**: [https://cwcbbchao.github.io/CwcMontage/](https://cwcbbchao.github.io/CwcMontage/)  
-> Visit the online documentation for deep architectural breakdowns, API references, live GIFs, and advanced tutorials.
+> **Online Documentation**: [https://cwcbbchao.github.io/CwcMontage/](https://cwcbbchao.github.io/CwcMontage/)  
+> Includes getting started tutorials, complete API references, and editor guides.
 
 ---
 
 ## Overview
 
-`CwcMontage` is a lightweight, high-performance, presentation-layer animation montage system tailored for modern action games (ACT / ARPG / Top-Down) in Unity.
+`CwcMontage` is a lightweight, responsive animation montage system for Unity action games (ACT, ARPG, action shooters, etc.).
 
-Built natively on Unity's **Playables API**, it decouples the **animation presentation layer from gameplay combat logic**: external state machines or ability systems drive gameplay decisions and state transitions, while `CwcMontage` orchestrates precise multi-track timeline execution, smooth crossfading, section speed adjustments, and safe Root Motion delegation.
-
----
-
-## Repository Structure
-
-This repository is organized into a clean wrapper structure:
-
-- **`.github/`**: GitHub Actions workflows (including automatic VitePress documentation deployment to GitHub Pages) and issue templates.
-- **`docs/`**: VitePress documentation source code.
-- **`LICENSE`**: Core source-available license governing this GitHub repository (Cwc Tools Public License).
-- **`CwcMontage/`**: The core Unity Package / Asset Store delivery directory. Contains `Runtime/`, `Editor/`, `Demo/`, and offline `Documentation/`. Copy this inner directory into your project's `Assets/` for plug-and-play installation.
+Built natively on Unity's **Playables API**, its core objective is to **cleanly separate animation presentation from gameplay combat logic**:
+- Your state machine or ability system simply decides *what action to play and when*.
+- Clip trimming, crossfading, audio and visual effect events, section duration scaling, and Root Motion extraction are handled automatically by the montage system.
+- No need to maintain tangled webs of transitions inside an Animator Controller graph.
 
 ---
 
 ## Visual Showcase
 
 ### 1. Interactive Montage Timeline Editor
-Precision scrubbing, real-time particle preview with deterministic simulation, multi-clip trimming, and section editing:
+Scrub the timeline freely with deterministic particle simulations, multi-clip trimming, and intuitive section setup:
 
 ![Editor Overview](docs/public/images/editor_overview.gif)
 
-### 2. Runtime Crossfading & Section Control
-Pre-allocated dual-slot crossfade transitions, dynamic section speed adjustments, and guaranteed paired event execution:
+### 2. Runtime Multi-Track Blending & Smooth Crossfading
+Dual-slot crossfading, real-time section speed adjustment, and guaranteed paired event execution:
 
 ![Runtime Demo](docs/public/images/runtime_demo.gif)
 
 ---
 
+## Repository Structure
+
+- **`.github/`**: Automation workflows and documentation deployment scripts.
+- **`docs/`**: VitePress documentation source files and images.
+- **`LICENSE`**: Source-available license for this repository (Cwc Tools Public License).
+- **`CwcMontage/`**: Core Unity Package delivery directory (containing `Runtime/`, `Editor/`, `Demo/`, offline `Documentation/`, and `package.json`). Copy this folder directly into your project's `Assets/` to start using it.
+
+---
+
 ## Key Features
 
-1. **Decoupled Presentation & Combat Logic**
-   - The core runtime does not hardcode gameplay or skill rules, keeping presentation clean and modular.
-   - Inherit from `MontageActionBlockBase` or `MontageSpatialActionBlockBase` to implement custom audio, VFX, freeze-frames, camera shakes, or hitboxes.
-2. **Multi-Layer Mixer Topology (FullBody / UpperBody / Additive)**
-   - Organized via Playables API with native support for **Full Body**, **Upper Body**, and **Additive** concurrent layers with independent weight blending.
-   - Enables moving attacks, upper-body spellcasting while running, and compounding hit flinches or firearm recoil.
-3. **Upper-Body Spine Orientation Compensation**
-   - Solves the common engine pain point where upper-body aim/attack posture tilts and sways with lower-body hip movement.
-   - Dynamically counter-rotates and blends the Spine local rotation at runtime, allowing generic Humanoid animations to maintain accurate aiming without modifying DCC skeleton rigs.
-4. **Action Sections & Dynamic Speed Warping**
-   - Slices animations by simple timestamps without hardcoded stage enums, allowing gameplay logic to map phases flexibly.
-   - Dynamically adjust section durations via `handle.SyncSectionDuration(sectionIndex, targetDuration)` without re-exporting FBX clips.
-   - Supports external progress driving (`handle.EvaluateSectionProgress`) for charging attacks and combo cancels.
-5. **Half-Open Interval Sweep (Guaranteed Paired Events)**
-   - Evaluates active blocks using `(LastTime, CurrentTime]` intervals. Even across severe frame drops, `OnEnter` and `OnExit` execute in strict pairs to prevent lingering effects.
-6. **0-GC Runtime State Separation (Immutable & Decoupled)**
-   - Completely eradicates runtime `blockData.Clone()` and heap allocations. Montage sequences become 100% immutable read-only asset singletons safe for arbitrary multi-character concurrency.
-   - All transient runtime data resides in `IMontageBlockState`, guarded by anti-boxing generic base classes (`MontageActionBlockBase<TState>`), keeping the dispatch core completely decoupled from specific components (OCP).
-7. **Typed Block State Pool & Per-Coordinator Micro Player Pool**
-   - Built-in `MontageBlockStatePool` caches states by `Type` stack, eradicating type-thrashing GC allocations when characters alternate between different skill actions.
-   - Character-level micro `MontagePlayer` pool (capacity 2~3) with in-place reuse; player recycling is strictly synchronized with multi-layer slot fade-out decay to prevent snap-to-bindpose artifacts.
-8. **Pre-allocated Double-Buffered Slots (0 GC)**
-   - Each layer pre-allocates two alternating slots for smooth CrossFading, avoiding runtime graph restructuring, stalls, and heap allocations.
-9. **Generational Safety Handle (MontageHandle)**
-   - 16-byte readonly struct allocated on the stack (0 GC).
-   - Encapsulates a Generation ID; expired or recycled slots invalidate old handles automatically, eliminating dangling references.
-10. **Safe Root Motion Delegation**
-    - Dispatches filtered horizontal, vertical, and rotational displacement deltas to `IMontageRootMotionReceiver` without interfering with external physics character controllers.
+1. **Decoupled Presentation & Combat Logic**  
+   The core runtime does not hardcode gameplay or skill rules. By subclassing `MontageActionBlockBase`, you can easily trigger audio clips, VFX, hit-stops, camera shakes, or custom hitboxes.
+
+2. **Out-of-the-Box State Controller (`MontageSimpleAnimator<TState>`)**  
+   Save time by avoiding bespoke animation boilerplate for every character. Define an enum for your character states (e.g., Idle, Move, Attack, Hurt, Dead) and inherit `MontageSimpleAnimator<TState>` to bind montages or raw animation clips right inside the Inspector, with built-in priority arbitration, sustained state looping, and timed states.
+
+3. **Multi-Layer Blending (Full Body / Upper Body / Additive)**  
+   Supports Full Body, Upper Body, and Additive layers simultaneously with independent weights. Allows attacking while running, casting while moving, or layering hit flinches and gun recoil onto any base action.
+
+4. **Upper-Body Spine Decoupling**  
+   Fixes the classic engine issue where upper-body attacks tilt and sway with the pelvis during locomotion. Dynamically counter-rotates the spine at runtime so generic Humanoid animations aim straight without editing rigs in DCC tools.
+
+5. **Action Sections & Dynamic Duration Warping**  
+   Slice clips into stages like windup, active, and recovery using simple timestamps. If game designers tweak attack timings in data tables, adjust them at runtime using `handle.SyncSectionDuration(...)` without re-exporting animations.
+
+6. **Guaranteed Paired Event Execution**  
+   Timeline action blocks are evaluated based on delta intervals. Even under severe frame rate drops or spikes, `OnEnter` and `OnExit` execute strictly in pairs, preventing persistent lingering effects or audio loops.
+
+7. **Unified Sequence Contract (`IMontageSequence`) & Multiple Formats**  
+   Supports classic `MontageSequenceSO`, modern container `MontageSequenceAsset`, and purely in-memory data (`MontageSequenceData`). You can also play raw `AnimationClip` instances directly. Includes a one-click migration utility (`MontageMigrationUtility`).
+
+8. **Memory & Performance Friendly**  
+   Montage assets are read-only at runtime, with transient states reused through object pools. Each layer uses pre-allocated double-buffered slots for crossfades, avoiding runtime node reconstruction and eliminating GC allocations during playback.
+
+9. **Safe Playback Handles (`MontageHandle`)**  
+   Playback methods return lightweight 16-byte value-type handles with built-in generation checking. Expired or overridden handles invalidate automatically, eliminating accidental dangling operations.
+
+10. **Delegated Root Motion**  
+    Filter horizontal, vertical, and rotational displacement independently and delegate them through `IMontageRootMotionReceiver` without interfering with your existing physics or character controllers.
 
 ---
 
 ## Quick Start
 
-### 1. Play a Montage and Map Section Durations
+### 1. Play a Montage and Adjust Section Durations
+
 ```csharp
 using UnityEngine;
 using Cwcbb.Tools.CwcMontage;
 
-public class HeroCombatController : MonoBehaviour
+public class PlayerCombatController : MonoBehaviour
 {
-    [SerializeField] private MontageController _controller;
-    [SerializeField] private MontageSequenceSO _swordAttackMontage;
+    [SerializeField] private MontageController _montageController;
+    [SerializeField] private MontageSequenceAsset _attackMontage;
 
     public void PerformAttack(float windupDuration, float activeDuration, float recoveryDuration)
     {
-        // 1. Play the montage and obtain a generation-safe handle
-        MontageHandle handle = _controller.Play(_swordAttackMontage);
+        // Play the montage and get a lightweight handle
+        MontageHandle handle = _montageController.Play(_attackMontage);
 
-        // 2. Synchronize section durations dynamically with combat data
         if (handle.IsValid)
         {
-            handle.SyncSectionDuration(0, windupDuration);    // Windup
-            handle.SyncSectionDuration(1, activeDuration);    // Active hitbox
-            handle.SyncSectionDuration(2, recoveryDuration);  // Recovery
+            // Dynamically apply combat timing to sections
+            handle.SyncSectionDuration(0, windupDuration);    // Section 0: Windup
+            handle.SyncSectionDuration(1, activeDuration);    // Section 1: Active
+            handle.SyncSectionDuration(2, recoveryDuration);  // Section 2: Recovery
         }
     }
 }
 ```
 
-### 2. Create a Custom Action Block
+### 2. Set Up Character Locomotion & States with MontageSimpleAnimator
+
+```csharp
+using UnityEngine;
+using Cwcbb.Tools.CwcMontage;
+
+// 1. Define your character states
+public enum PlayerState
+{
+    Idle = 0,
+    Move = 10,
+    Hurt = 50,
+    Attack = 60,
+    Dead = 100
+}
+
+// 2. Inherit the generic class to get automated arbitration and an Inspector dashboard
+public class PlayerAnimator : MontageSimpleAnimator<PlayerState>
+{
+    // Base speed used to scale locomotion animations automatically with current speed
+    protected override float BaseLocomotionSpeed => 5.0f;
+}
+
+// 3. Call from your gameplay scripts:
+// Enable continuous moving state (passing current velocity):
+// playerAnimator.SetSustainedState(PlayerState.Move, true, currentSpeed);
+
+// Trigger a 0.3-second hit reaction (automatically recovers when expired):
+// playerAnimator.TriggerTimedState(PlayerState.Hurt, 0.3f);
+```
+
+### 3. Create a Custom Action Block (e.g., Hit Stop)
+
 ```csharp
 using UnityEngine;
 using Cwcbb.Tools.CwcMontage;
 
 [MontageCategory("Combat")]
-[MontageColor("#e74c3c")]
+[MontageColor("#E74C3C")]
 [MontageDisplayName("Hit Stop")]
 public class HitStopActionBlock : MontageActionBlockBase
 {
@@ -121,82 +156,54 @@ public class HitStopActionBlock : MontageActionBlockBase
     public override void OnEnter(in MontageActionContext context)
     {
         base.OnEnter(context);
-        // Trigger hit freeze frame
+        Time.timeScale = _timeScale;
     }
 
     public override void OnExit(in MontageActionContext context)
     {
         base.OnExit(context);
-        // Restore time scale
+        Time.timeScale = 1.0f;
     }
 }
 ```
 
 ---
 
-## Interactive Demo Scene
+## Interactive Demo
 
-A complete combat demonstration scene is provided out of the box:
-- **Scene Location**: `CwcMontage/Demo/Scenes/MontageDemoScene.unity`
-- **Out of the Box**: Open the scene directly after importing the package—no extra unpacking required.
+The package includes a complete combat demonstration scene:
+- **Scene Location**: `CwcMontage/Demo/Scenes/MontageDemoScene.unity`.
+- **Out of the Box**: Open and play the scene directly without unpacking.
 - **Controls**:
-  - **1 - 9**: Switch attack combos, rolls, and punches.
+  - **1 - 9**: Switch between attack combos, rolls, and punches.
   - **Space**: Pause / resume playback.
-  - **Tab**: Jump to next physical section immediately.
-  - **Q / E / R**: Slow (0.5x) / Normal (1.0x) / Fast (1.5x) time scale.
-  - Top-left HUD displays live PlayableGraph ping-pong slot weights and section progress.
-- **Full Decoupling**: The demo module is entirely self-contained with its own `.asmdef` assembly and zero reverse dependencies on `Runtime` or `Editor`.
+  - **Tab**: Skip immediately to the next section.
+  - **Q / E / R**: Slow motion (0.5x) / Normal (1.0x) / Fast (1.5x).
+  - The top-left HUD displays live Playables mixer weights and section progress.
+- **Isolated Assembly**: The demo has its own `.asmdef` assembly and does not pollute core runtime code.
 
 ---
 
-## Core Architecture & Roles
+## Core Classes & Roles
 
-| Class | Namespace | Responsibility |
-| :--- | :--- | :--- |
-| `MontageSequenceSO` | `Cwcbb.Tools.CwcMontage` | Montage configuration asset (ScriptableObject) holding animations, curves, physical sections, and track data |
-| `MontageSequenceAsset` | `Cwcbb.Tools.CwcMontage` | Modular montage asset wrapper supporting data-driven composition |
-| `IMontageSequence` | `Cwcbb.Tools.CwcMontage` | Core interface contract for montage sequences, decoupling asset storage from runtime players |
-| `MontageController` | `Cwcbb.Tools.CwcMontage` | Core MonoBehaviour on the character entity managing PlayableGraph mixer topology and Root Motion dispatching |
-| `MontageSimpleAnimator` | `Cwcbb.Tools.CwcMontage` | Lightweight procedural/simple animation component for basic crossfades and state playback |
-| `MontageActionBlockBase` | `Cwcbb.Tools.CwcMontage` | Abstract base class for custom visual/audio action blocks (supports anti-boxing typed state pool) |
-| `MontageHandle` | `Cwcbb.Tools.CwcMontage` | Lightweight struct handle (with generation and dangling checks, zero GC driving and querying) |
-| `MontagePlayer` | `Cwcbb.Tools.CwcMontage` | Pure C# runtime player executing incremental sweep sampling, clock alignment, and section state stepping |
-| `MontageSpineDecoupleUtility` | `Cwcbb.Tools.CwcMontage` | Lightweight Dummy skeleton transient sampler and quaternion inverse utility for real-time spine root rotation decoupling |
-| `IMontageRootMotionReceiver` | `Cwcbb.Tools.CwcMontage` | Interface for receiving delegated Root Motion deltas without polluting external physics controllers |
-
----
-
-## Evolution & Roadmap
-
-`CwcMontage` is strictly positioned as a **high-fidelity, pure presentation-layer action montage system**, focusing relentlessly on animation blending, audio/VFX synchronization, and timeline authoring:
-
-- [x] **v1.0.0 (Core Engine Foundations)**
-  - Playables mixer graph with dual-slot ping-pong crossfade topology
-  - Interval sweep sampling algorithm (ensuring strictly paired events even under severe frame drops)
-  - Geometric physical sections with Adaptive Time Warping
-  - Interactive Timeline Editor with real-time Scene view scrubbing
-  - Delegated Root Motion distribution
-- [x] **v1.1.0 (Multi-Track & Decoupled Blending)**
-  - Multi-track animation pipeline: Full Body, Upper Body, and Additive layers
-  - Real-time Spine Decoupled Root Rotation algorithm (quaternion inverse math, zero DCC bone modifications, 100% plug-and-play for generic Humanoid assets)
-  - Built-in Editor Locomotion simulation and preview
-  - Independent clip-level crossfade and self-consistent latched exit weights
-- [x] **v1.2.0 (0-GC & Virtual Hooks Refactor)**
-  - 0-GC pure read-only configuration and `IMontageBlockState` externalized state architecture
-  - Typed block state pool `MontageBlockStatePool` and character-level micro player pool
-  - Comprehensive `protected virtual` hooks for open-closed extensibility
-- [x] **v1.2.2 (Generic Rig & Minimalist Viewport)**
-  - Generic / Non-Humanoid skeleton support and per-asset preview model binding
-  - Custom upper-body AvatarMask support with layer conflict safeguards
-  - Real-time skeleton mismatch warning outlines and SceneView-style capsule viewport menus
-- [ ] **v1.3.0 (Expressiveness & Authoring UX - Planned)**
-  - Curve Parameter Track: Continuously drive Shader float properties, post-processing exposures, and audio volume via custom `AnimationCurve`
-  - Timeline multi-selection and snapping: Box-select multiple action blocks, keyframe snapping, and batch proportional scaling
-  - Unity 6 LTS (6000.x) deep profiling and UI Toolkit timeline scroll optimization
+| Class | Description |
+| :--- | :--- |
+| `MontageController` | Core component on the character managing PlayableGraph topology, layers, crossfades, and Root Motion |
+| `MontageSimpleAnimator<TState>` | State animation controller base class with priority arbitration, inspector monitoring, and raw clip assembly |
+| `IMontageSequence` | Unified read-only montage interface decoupling data assets from the underlying player |
+| `MontageSequenceAsset` | Modern asset container designed for modular asset distribution and authoring |
+| `MontageSequenceSO` | Classic ScriptableObject montage configuration asset |
+| `MontageSequenceData` | In-memory data model for assembling montages purely in C# code |
+| `MontageHandle` | 16-byte readonly struct handle with generational validity checking for safe playback control |
+| `MontagePlayer` | Pure C# playback instance driving timeline sweep sampling and state stepping |
+| `MontageActionBlockBase` | Base class for timeline events (audio, VFX, freeze-frames, hitboxes, etc.) |
+| `MontageMigrationUtility` | Editor tool for seamless two-way migration between legacy SO and modern Asset formats |
+| `MontageSpineDecoupleUtility` | Utility sampler performing dynamic spine counter-rotation during locomotion attacks |
+| `IMontageRootMotionReceiver` | Receiver interface for delegated Root Motion deltas |
 
 ---
 
-## License & Third-Party Notices
+## License & Notices
 
 - The core source code is released under the [Cwc Tools Public License (Source-Available)](LICENSE):
   - **End Products (Commercial & Free Games)**: Free to integrate, compile, and distribute within interactive games and applications without royalty fees.
