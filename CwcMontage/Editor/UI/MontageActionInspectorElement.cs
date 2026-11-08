@@ -364,8 +364,7 @@ namespace Cwcbb.Tools.CwcMontage.Editor
             var actionFoldout = new Foldout { text = "Action Parameters", value = true };
             actionFoldout.AddToClassList("montage-inspector-foldout");
 
-            string propPath = $"_tracks.Array.data[{blockElement.TrackIndex}]._actionBlocks.Array.data[{blockElement.BlockIndex}]._action";
-            var actionProp = _serializedAsset.FindProperty(propPath);
+            var actionProp = FindActionProperty(blockElement);
 
             if (actionProp != null)
             {
@@ -433,6 +432,13 @@ namespace Cwcbb.Tools.CwcMontage.Editor
                         blockElement.UpdateVisual();
                         OnDataModified?.Invoke();
                     });
+                }
+
+                if (primaryProps.Count == 0 && spatialProps.Count == 0)
+                {
+                    var emptyHint = new Label("No additional configurable parameters for this action.");
+                    emptyHint.AddToClassList("montage-inspector-time-hint");
+                    actionFoldout.Add(emptyHint);
                 }
 
                 actionFoldout.Bind(_serializedAsset);
@@ -812,9 +818,82 @@ namespace Cwcbb.Tools.CwcMontage.Editor
         private SerializedProperty FindAssetProperty(string propName)
         {
             if (_serializedAsset == null) return null;
-            var prop = _serializedAsset.FindProperty($"_data.{propName}");
-            if (prop != null) return prop;
-            return _serializedAsset.FindProperty(propName);
+            return _serializedAsset.FindProperty($"_data.{propName}");
+        }
+
+        private SerializedProperty FindActionProperty(MontageActionBlockElement blockElement)
+        {
+            if (_serializedAsset == null || blockElement?.Data == null)
+            {
+                return null;
+            }
+
+            int trackIdx = blockElement.TrackIndex;
+            int blockIdx = blockElement.BlockIndex;
+            var targetAction = blockElement.Data.Action;
+
+            // 1. 直接通过新版 MontageSequenceAsset 标准属性路径获取
+            string propPath = $"_data._tracks.Array.data[{trackIdx}]._actionBlocks.Array.data[{blockIdx}]._action";
+            var actionProp = _serializedAsset.FindProperty(propPath);
+            if (actionProp != null && (targetAction == null || actionProp.managedReferenceValue == targetAction))
+            {
+                return actionProp;
+            }
+
+            // 2. 容错查找：当轨道或 ActionBlock 在运行时发生重排序/增删导致索引尚未刷新时，遍历匹配目标 Action 实例
+            var tracksProp = _serializedAsset.FindProperty("_data._tracks");
+            if (tracksProp != null && tracksProp.isArray)
+            {
+                // 先在当前所在轨道内快速搜寻
+                if (trackIdx >= 0 && trackIdx < tracksProp.arraySize)
+                {
+                    var trackProp = tracksProp.GetArrayElementAtIndex(trackIdx);
+                    var blocksProp = trackProp?.FindPropertyRelative("_actionBlocks");
+                    if (blocksProp != null && blocksProp.isArray)
+                    {
+                        if (targetAction != null)
+                        {
+                            for (int b = 0; b < blocksProp.arraySize; b++)
+                            {
+                                var blockProp = blocksProp.GetArrayElementAtIndex(b);
+                                var actProp = blockProp?.FindPropertyRelative("_action");
+                                if (actProp != null && actProp.managedReferenceValue == targetAction)
+                                {
+                                    return actProp;
+                                }
+                            }
+                        }
+                        else if (blockIdx >= 0 && blockIdx < blocksProp.arraySize)
+                        {
+                            return blocksProp.GetArrayElementAtIndex(blockIdx)?.FindPropertyRelative("_action");
+                        }
+                    }
+                }
+
+                // 全局跨轨道搜寻
+                if (targetAction != null)
+                {
+                    for (int t = 0; t < tracksProp.arraySize; t++)
+                    {
+                        var trackProp = tracksProp.GetArrayElementAtIndex(t);
+                        var blocksProp = trackProp?.FindPropertyRelative("_actionBlocks");
+                        if (blocksProp != null && blocksProp.isArray)
+                        {
+                            for (int b = 0; b < blocksProp.arraySize; b++)
+                            {
+                                var blockProp = blocksProp.GetArrayElementAtIndex(b);
+                                var actProp = blockProp?.FindPropertyRelative("_action");
+                                if (actProp != null && actProp.managedReferenceValue == targetAction)
+                                {
+                                    return actProp;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return actionProp;
         }
 
         private void RebuildAssetSettingsTab()
